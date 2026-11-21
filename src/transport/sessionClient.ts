@@ -14,7 +14,12 @@ import {
   type TileGestureKind,
 } from '../protocol/types'
 import { DEFAULT_DEMO_DECK } from './defaultDeck'
-import { isNativeShell, type SavedHostProfile } from './nativeBridge'
+import {
+  isNativeShell,
+  startNativeAudioCapture,
+  stopNativeAudioCapture,
+  type SavedHostProfile,
+} from './nativeBridge'
 
 export interface TransportAdapter {
   connect(handlers: {
@@ -292,6 +297,7 @@ export class MobileSessionClient {
   }
 
   disconnect(reason = 'user_disconnect'): void {
+    stopNativeAudioCapture()
     this.allowAutoReconnect = false
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
@@ -314,6 +320,7 @@ export class MobileSessionClient {
   }
 
   handleVisibilityHidden(): void {
+    stopNativeAudioCapture()
     if (this.phase === 'active' && this.sessionId) {
       this.sendRaw({
         type: 'input.cancel',
@@ -457,6 +464,32 @@ export class MobileSessionClient {
     if (!ok) return null
     this.pendingDeckRequests.set(requestId, baseRevision)
     return requestId
+  }
+
+  startVoiceStream(): boolean {
+    if (!this.isInputReady() || !this.sessionId) return false
+    const sent = this.sendRaw({
+      type: 'audio.start',
+      sessionId: this.sessionId,
+      sampleRate: 16000,
+      channels: 1,
+    })
+    if (!sent) return false
+    if (isNativeShell()) {
+      const started = startNativeAudioCapture()
+      if (!started) {
+        this.sendRaw({ type: 'audio.stop', sessionId: this.sessionId })
+        return false
+      }
+    }
+    return true
+  }
+
+  stopVoiceStream(): void {
+    stopNativeAudioCapture()
+    if (this.sessionId && this.phase === 'active') {
+      this.sendRaw({ type: 'audio.stop', sessionId: this.sessionId })
+    }
   }
 
   private openHostConnection(): void {

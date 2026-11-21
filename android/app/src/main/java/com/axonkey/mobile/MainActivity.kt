@@ -1,7 +1,12 @@
 package com.axonkey.mobile
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
@@ -14,7 +19,9 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.webkit.WebViewAssetLoader
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -23,12 +30,14 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString.Companion.toByteString
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
@@ -36,6 +45,8 @@ import javax.net.ssl.X509TrustManager
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private var activeSocket: WebSocket? = null
+    private val audioCapturing = AtomicBoolean(false)
+    private var audioThread: Thread? = null
 
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         val raw = result.contents
@@ -44,6 +55,13 @@ class MainActivity : AppCompatActivity() {
             emitJs("window.__axonkeyNativeOnQrScanned && window.__axonkeyNativeOnQrScanned($quoted);")
         }
     }
+
+    private val audioPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (!granted) {
+                emitJs("window.__axonkeyNativeOnError && window.__axonkeyNativeOnError('需要麦克风权限才能发送语音');")
+            }
+        }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,6 +90,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        stopAudioInternal()
         emitJs("window.__axonkeyNativeOnLifecycle && window.__axonkeyNativeOnLifecycle('paused');")
     }
 
@@ -81,9 +100,75 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        stopAudioInternal()
         activeSocket?.close(1000, "activity_destroyed")
         activeSocket = null
         super.onDestroy()
+    }
+
+    private fun stopAudioInternal() {
+        audioCapturing.set(false)
+        audioThread?.interrupt()
+        audioThread = null
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startAudioInternal(): Boolean {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            runOnUiThread { audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+            return false
+        }
+        val socket = activeSocket ?: return false
+        stopAudioInternal()
+
+        val sampleRate = 16000
+        val channelConfig = AudioFormat.CHANNEL_IN_MONO
+        val encoding = AudioFormat.ENCODING_PCM_16BIT
+        val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, encoding)
+        if (minBuf <= 0) return false
+        val frameBytes = 640 // 20ms @ 16kHz mono s16le
+
+        val recorder = AudioRecord(
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            sampleRate,
+            channelConfig,
+            encoding,
+            maxOf(minBuf, frameBytes * 4)
+        )
+        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+            recorder.release()
+            return false
+        }
+
+        audioCapturing.set(true)
+        audioThread = Thread {
+            val buf = ByteArray(frameBytes)
+            try {
+                recorder.startRecording()
+                while (audioCapturing.get() && !Thread.currentThread().isInterrupted) {
+                    val read = recorder.read(buf, 0, buf.size)
+                    if (read > 0) {
+                        if (!socket.send(buf.toByteString(0, read))) {
+                            break
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                try {
+                    recorder.stop()
+                } catch (_: Exception) {
+                }
+                recorder.release()
+                audioCapturing.set(false)
+            }
+        }.apply {
+            name = "axonkey-pcm-capture"
+            start()
+        }
+        return true
     }
 
     private fun emitJs(script: String) {
@@ -112,7 +197,6 @@ class MainActivity : AppCompatActivity() {
         return OkHttpClient.Builder()
             .sslSocketFactory(sslContext.socketFactory, trustManager)
             .hostnameVerifier { _, session ->
-                // Certificate chain is already strictly validated against the paired host's private CA.
                 session.peerCertificates.isNotEmpty()
             }
             .connectTimeout(5, TimeUnit.SECONDS)
@@ -164,7 +248,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun startAudioCapture(): Boolean = startAudioInternal()
+
+        @JavascriptInterface
+        fun stopAudioCapture() {
+            stopAudioInternal()
+        }
+
+        @JavascriptInterface
         fun connectWss(url: String, hostId: String, caCertDerB64: String, subprotocol: String) {
+            stopAudioInternal()
             activeSocket?.close(1000, "reconnect")
             try {
                 val client = buildPinnedClient(hostId, caCertDerB64)
@@ -183,11 +276,13 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                        stopAudioInternal()
                         val quoted = JSONObject.quote(reason)
                         emitJs("window.__axonkeyNativeOnClose && window.__axonkeyNativeOnClose($code, $quoted);")
                     }
 
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                        stopAudioInternal()
                         val quoted = JSONObject.quote(t.message ?: "TLS/WSS 连接失败")
                         emitJs("window.__axonkeyNativeOnError && window.__axonkeyNativeOnError($quoted);")
                         emitJs("window.__axonkeyNativeOnClose && window.__axonkeyNativeOnClose(1006, $quoted);")
@@ -204,6 +299,7 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun closeWss(reason: String) {
+            stopAudioInternal()
             activeSocket?.close(1000, reason)
             activeSocket = null
         }

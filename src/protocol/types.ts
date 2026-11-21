@@ -181,6 +181,16 @@ export type ClientMessage =
       inputEpoch: number
       reason: string
     }
+  | {
+      type: 'audio.start'
+      sessionId: string
+      sampleRate: 16000
+      channels: 1
+    }
+  | {
+      type: 'audio.stop'
+      sessionId: string
+    }
 
 export type ServerMessage =
   | {

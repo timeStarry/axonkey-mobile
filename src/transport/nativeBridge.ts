@@ -17,6 +17,8 @@ interface AxonkeyAndroidBridge {
   connectWss(url: string, hostId: string, caCertDerB64: string, subprotocol: string): void
   sendWssText(payload: string): boolean
   closeWss(reason: string): void
+  startAudioCapture(): boolean
+  stopAudioCapture(): void
   saveHostCredentials(json: string): void
   loadHostCredentials(): string
   deleteHostCredentials(hostId: string): void
@@ -56,6 +58,19 @@ export function triggerHaptic(kind: 'tap' | 'confirm' | 'error' | 'heavy' = 'tap
 export function setKeepScreenOn(enabled: boolean): void {
   if (typeof window !== 'undefined' && window.AxonkeyNative) {
     window.AxonkeyNative.setKeepScreenOn(enabled)
+  }
+}
+
+export function startNativeAudioCapture(): boolean {
+  if (typeof window !== 'undefined' && window.AxonkeyNative) {
+    return window.AxonkeyNative.startAudioCapture()
+  }
+  return false
+}
+
+export function stopNativeAudioCapture(): void {
+  if (typeof window !== 'undefined' && window.AxonkeyNative) {
+    window.AxonkeyNative.stopAudioCapture()
   }
 }
 
