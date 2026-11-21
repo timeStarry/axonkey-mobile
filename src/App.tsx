@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Check, LayoutGrid, MousePointer2, Pencil, Rows2, Wifi } from 'lucide-react'
 import { clsx } from 'clsx'
+import { ClassicRemoteView } from './components/ClassicRemoteView'
 import { DeckEditorSheet } from './components/DeckEditorSheet'
 import { DeckGrid } from './components/DeckGrid'
 import { PairingSheet } from './components/PairingSheet'
@@ -179,7 +180,12 @@ export function App() {
             )}
 
             <div className="flex-1 min-h-0 overflow-y-auto pr-0.5">
-              {activePage && <DeckGrid page={activePage} compact={viewMode === 'split'} />}
+              {activePage &&
+                (activePage.layout === 'remote' ? (
+                  <ClassicRemoteView page={activePage} />
+                ) : (
+                  <DeckGrid page={activePage} compact={viewMode === 'split'} />
+                ))}
             </div>
           </div>
         )}

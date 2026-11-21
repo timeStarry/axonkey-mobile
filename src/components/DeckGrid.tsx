@@ -173,9 +173,9 @@ export function DeckGrid({ page, compact = false }: DeckGridProps) {
               <div className="text-[14px] font-semibold text-zinc-100 truncate leading-tight">
                 {tile.label}
               </div>
-              {tile.subtitle && (
-                <div className="text-[11px] text-zinc-400/90 truncate mt-0.5 leading-tight">
-                  {tile.subtitle}
+              {(tile.actionSummary || tile.subtitle) && (
+                <div className="text-[11px] text-zinc-400/90 font-mono truncate mt-0.5 leading-tight">
+                  {tile.actionSummary ?? tile.subtitle}
                 </div>
               )}
             </div>

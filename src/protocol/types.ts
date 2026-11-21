@@ -38,10 +38,13 @@ export interface ForegroundContext {
   profileName: string
 }
 
+export type PageLayout = 'remote' | 'grid'
+
 export interface MobileTile {
   id: string
   label: string
   subtitle?: string
+  actionSummary?: string
   icon: string
   accent: TileAccent
   colSpan: 1 | 2
@@ -53,6 +56,7 @@ export interface MobileTile {
 export interface MobileDeckPage {
   id: string
   name: string
+  layout?: PageLayout
   columns: 2 | 3 | 4
   tiles: MobileTile[]
 }

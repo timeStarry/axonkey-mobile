@@ -162,7 +162,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     context: { appId: null, appName: null, profileName: '默认配置' },
     contextRevision: 1,
     savedHosts: [],
-    viewMode: 'split',
+    viewMode: 'deck',
     editMode: false,
     pairingOpen: false,
     editingTileId: null,

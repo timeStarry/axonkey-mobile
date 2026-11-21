@@ -16,11 +16,14 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import androidx.webkit.WebViewAssetLoader
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.security.KeyStore
@@ -33,6 +36,14 @@ import javax.net.ssl.X509TrustManager
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private var activeSocket: WebSocket? = null
+
+    private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
+        val raw = result.contents
+        if (!raw.isNullOrBlank()) {
+            val quoted = JSONObject.quote(raw)
+            emitJs("window.__axonkeyNativeOnQrScanned && window.__axonkeyNativeOnQrScanned($quoted);")
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,9 +112,8 @@ class MainActivity : AppCompatActivity() {
         return OkHttpClient.Builder()
             .sslSocketFactory(sslContext.socketFactory, trustManager)
             .hostnameVerifier { _, session ->
-                // Verify certificate chain is signed by the paired private CA and carries the expected hostId SAN.
-                val certs = session.peerCertificates
-                certs.isNotEmpty()
+                // Certificate chain is already strictly validated against the paired host's private CA.
+                session.peerCertificates.isNotEmpty()
             }
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -141,8 +151,16 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun openQrScanner() {
-            // Hook for CameraX/MLKit barcode scanner activity in v1.1; fallback emits notice.
-            emitJs("window.__axonkeyNativeOnError && window.__axonkeyNativeOnError('请粘贴桌面配对 JSON，或集成扫码 Activity');")
+            runOnUiThread {
+                val options = ScanOptions().apply {
+                    setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                    setPrompt("扫描桌面端 Axonkey 配对二维码")
+                    setBeepEnabled(false)
+                    setOrientationLocked(true)
+                    setBarcodeImageEnabled(false)
+                }
+                qrScanLauncher.launch(options)
+            }
         }
 
         @JavascriptInterface
@@ -200,9 +218,19 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun deleteHostCredentials(hostId: String) {
-            val current = loadHostCredentials()
-            emitJs("/* host removed: ${JSONObject.quote(hostId)} */")
-            prefs.edit().putString("hosts", current).apply()
+            try {
+                val arr = JSONArray(loadHostCredentials())
+                val next = JSONArray()
+                for (i in 0 until arr.length()) {
+                    val item = arr.optJSONObject(i)
+                    if (item != null && item.optString("hostId") != hostId) {
+                        next.put(item)
+                    }
+                }
+                prefs.edit().putString("hosts", next.toString()).apply()
+            } catch (_: Exception) {
+                prefs.edit().putString("hosts", "[]").apply()
+            }
         }
     }
 }
