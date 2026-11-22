@@ -6,6 +6,8 @@ export type TileAccent = 'slate' | 'blue' | 'emerald' | 'amber' | 'rose' | 'viol
 export type PointerButtonName = 'left' | 'right' | 'middle'
 export type PointerButtonPhase = 'down' | 'up'
 export type TextCommitMode = 'paste' | 'type'
+export type GyroMode = 'off' | 'relative' | 'absolute'
+export type GyroGuardKind = 'vertical_guard' | 'out_of_bounds'
 
 export type SessionPhase =
   | 'disconnected'
@@ -25,10 +27,21 @@ export interface PairingOfferQr {
   expiresAtMs: number
 }
 
+export interface DiscoveredLanHost {
+  hostId: string
+  hostName: string
+  port: number
+  addrs: string[]
+}
+
 export interface HostCapabilities {
   relativePointer: boolean
+  absolutePointer?: boolean
+  binaryPointerV1?: boolean
+  binaryAudioV1?: boolean
   textCommit: boolean
   audioPcm16: boolean
+  udpDiscoveryPort?: number
   platform: 'windows' | 'macos' | 'linux' | 'unknown'
 }
 
@@ -69,6 +82,7 @@ export interface DeckSnapshot {
   scrollSensitivity: number
   doubleClickWindowMs: number
   longPressWindowMs: number
+  voiceBindingSummary?: string | null
   pages: MobileDeckPage[]
 }
 
@@ -182,6 +196,33 @@ export type ClientMessage =
       reason: string
     }
   | {
+      type: 'voice.begin'
+      sessionId: string
+      inputEpoch: number
+      inputGeneration: number
+      seq: number
+      leaseId: number
+      requestId: string
+      streamId: number
+    }
+  | {
+      type: 'voice.end'
+      sessionId: string
+      inputEpoch: number
+      inputGeneration: number
+      seq: number
+      requestId: string
+      streamId: number
+      finalSampleExclusive: number
+    }
+  | {
+      type: 'voice.cancel'
+      sessionId: string
+      inputEpoch: number
+      streamId: number
+      reason: string
+    }
+  | {
       type: 'audio.start'
       sessionId: string
       sampleRate: 16000
@@ -204,6 +245,7 @@ export type ServerMessage =
       type: 'server.ready'
       sessionId: string
       inputEpoch: number
+      inputGeneration?: number
       leaseId: number
       leaseTtlMs: number
       tickIntervalMs: number
@@ -219,6 +261,7 @@ export type ServerMessage =
       type: 'server.tick'
       sessionId: string
       inputEpoch: number
+      inputGeneration?: number
       leaseId: number
       leaseTtlMs: number
     }
@@ -227,6 +270,7 @@ export type ServerMessage =
       deckSnapshot: DeckSnapshot
       deckRevision: number
       inputEpoch: number
+      inputGeneration?: number
     }
   | {
       type: 'context.changed'

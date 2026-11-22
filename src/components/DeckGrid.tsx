@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Plus, SlidersHorizontal } from 'lucide-react'
 import { clsx } from 'clsx'
 import { TileGestureController } from '../input/tileGesture'
-import type { MobileDeckPage, MobileTile } from '../protocol/types'
+import type { MobileDeckPage, MobileTile, TileGestureKind } from '../protocol/types'
 import { registerPendingTileRequest, useMobileStore } from '../state/useMobileStore'
-import { triggerHaptic } from '../transport/nativeBridge'
+import { triggerHaptic, type HapticKind } from '../transport/nativeBridge'
 import { ACCENT_STYLES, getTileIcon } from '../ui/icons'
 
 interface DeckGridProps {
@@ -12,22 +11,32 @@ interface DeckGridProps {
   compact?: boolean
 }
 
+function resolveDeckHaptic(tile: MobileTile | undefined, gesture: TileGestureKind): HapticKind {
+  if (gesture === 'long') return 'heavy'
+  if (gesture === 'double') return 'confirm'
+  if (tile?.accent === 'rose') return 'heavy'
+  if (tile?.accent === 'emerald' || tile?.icon === 'enter' || tile?.icon === 'check') {
+    return 'confirm'
+  }
+  return 'tap'
+}
+
 export function DeckGrid({ page, compact = false }: DeckGridProps) {
-  const editMode = useMobileStore((s) => s.editMode)
-  const setEditingTileId = useMobileStore((s) => s.setEditingTileId)
   const tileFeedback = useMobileStore((s) => s.tileFeedback)
   const deck = useMobileStore((s) => s.deck)
   const getClient = useMobileStore((s) => s.getClient)
-  const submitDeckPatch = useMobileStore((s) => s.submitDeckPatch)
 
   const [pressedIds, setPressedIds] = useState<Record<string, boolean>>({})
+  const tilesRef = useRef<Map<string, MobileTile>>(new Map())
+  tilesRef.current = new Map(page.tiles.map((t) => [t.id, t]))
+
   const controllerRef = useRef<TileGestureController | null>(null)
 
   if (!controllerRef.current) {
     controllerRef.current = new TileGestureController(
       {
         onActivate: (tileId, gesture) => {
-          triggerHaptic(gesture === 'long' ? 'heavy' : 'tap')
+          triggerHaptic(resolveDeckHaptic(tilesRef.current.get(tileId), gesture))
           const reqId = getClient().sendTileActivate(tileId, gesture)
           registerPendingTileRequest(reqId, tileId)
         },
@@ -58,66 +67,37 @@ export function DeckGrid({ page, compact = false }: DeckGridProps) {
     return () => ctrl?.cancelAll()
   }, [])
 
-  const handleAddTile = () => {
-    const newId = `tile.custom.${Date.now().toString(36)}`
-    const nextPages = deck.pages.map((p) =>
-      p.id === page.id
-        ? {
-            ...p,
-            tiles: [
-              ...p.tiles,
-              {
-                id: newId,
-                label: '新按键',
-                icon: 'zap',
-                accent: 'slate' as const,
-                colSpan: 1 as const,
-                mode: 'gesture' as const,
-                hasDoubleClick: false,
-                hasLongPress: false,
-              },
-            ],
-          }
-        : p,
-    )
-    submitDeckPatch({ pages: nextPages })
-    setEditingTileId(newId)
-  }
-
   const colClass =
     page.columns === 2 ? 'grid-cols-2' : page.columns === 4 ? 'grid-cols-4' : 'grid-cols-3'
 
   return (
-    <div className={clsx('grid gap-2.5 w-full', colClass)}>
+    <div className={clsx('grid gap-2.5 w-full pb-1', colClass)}>
       {page.tiles.map((tile: MobileTile) => {
         const Icon = getTileIcon(tile.icon)
         const style = ACCENT_STYLES[tile.accent] ?? ACCENT_STYLES.slate
         const pressed = Boolean(pressedIds[tile.id])
         const fb = tileFeedback[tile.id]
-        const recentFb = fb && Date.now() - fb.at < 700 ? fb.status : null
+        const recentFb = fb && Date.now() - fb.at < 650 ? fb.status : null
 
         return (
           <button
             key={tile.id}
             type="button"
             className={clsx(
-              'tile-surface relative flex flex-col justify-between rounded-2xl border text-left transition-all duration-100 select-none touch-none',
-              compact ? 'min-h-[76px] p-3' : 'min-h-[92px] p-3.5',
+              'tile-surface relative flex flex-col justify-between rounded-2xl border text-left select-none touch-none',
+              compact ? 'min-h-[78px] p-3' : 'min-h-[96px] p-3.5',
               tile.colSpan === 2 && 'col-span-2',
               style.card,
-              pressed && 'tile-pressed',
-              recentFb === 'ok' && 'ring-2 ring-emerald-400/70',
+              pressed && clsx('tile-pressed', style.pressedGlow),
+              recentFb === 'ok' && 'ring-1 ring-emerald-400/75',
               recentFb === 'error' && 'ring-2 ring-rose-500/80',
-              editMode && 'border-dashed border-blue-400/50',
             )}
             onPointerDown={(e) => {
-              if (editMode) return
               e.currentTarget.setPointerCapture(e.pointerId)
               setPressedIds((prev) => ({ ...prev, [tile.id]: true }))
               controllerRef.current?.onDown(tile)
             }}
             onPointerUp={() => {
-              if (editMode) return
               setPressedIds((prev) => ({ ...prev, [tile.id]: false }))
               controllerRef.current?.onUp(tile.id)
             }}
@@ -125,17 +105,11 @@ export function DeckGrid({ page, compact = false }: DeckGridProps) {
               setPressedIds((prev) => ({ ...prev, [tile.id]: false }))
               controllerRef.current?.onCancel(tile.id)
             }}
-            onClick={() => {
-              if (editMode) {
-                triggerHaptic('tap')
-                setEditingTileId(tile.id)
-              }
-            }}
           >
-            <div className="flex items-start justify-between gap-2 w-full">
+            <div className="flex items-start justify-between gap-1.5 w-full">
               <span
                 className={clsx(
-                  'inline-flex items-center justify-center rounded-xl',
+                  'inline-flex items-center justify-center rounded-xl shrink-0',
                   compact ? 'w-8 h-8' : 'w-9 h-9',
                   style.iconBg,
                   style.iconText,
@@ -144,55 +118,41 @@ export function DeckGrid({ page, compact = false }: DeckGridProps) {
                 <Icon className={compact ? 'w-4 h-4' : 'w-[18px] h-[18px]'} strokeWidth={2.1} />
               </span>
 
-              {editMode ? (
-                <span className="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-blue-500/20 text-blue-300">
-                  <SlidersHorizontal className="w-3.5 h-3.5" />
-                </span>
-              ) : (
-                <div className="flex items-center gap-1">
-                  {tile.mode === 'hold' && (
-                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wider bg-white/10 text-zinc-300">
-                      HOLD
-                    </span>
-                  )}
-                  {tile.hasDoubleClick && (
-                    <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-white/[0.08] text-zinc-400">
-                      2×
-                    </span>
-                  )}
-                  {tile.hasLongPress && (
-                    <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-white/[0.08] text-zinc-400">
-                      长按
-                    </span>
-                  )}
-                </div>
-              )}
+              <div className="flex items-center gap-1 flex-wrap justify-end">
+                {tile.mode === 'hold' && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wider bg-white/[0.1] text-zinc-200">
+                    HOLD
+                  </span>
+                )}
+                {tile.hasDoubleClick && (
+                  <span className="px-1 py-0.5 rounded text-[9px] font-mono font-medium bg-white/[0.08] text-zinc-400">
+                    2×
+                  </span>
+                )}
+                {tile.hasLongPress && (
+                  <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-white/[0.08] text-zinc-400">
+                    长按
+                  </span>
+                )}
+              </div>
             </div>
 
-            <div className="mt-2 min-w-0">
-              <div className="text-[14px] font-semibold text-zinc-100 truncate leading-tight">
+            <div className="mt-2.5 min-w-0">
+              <div className="text-[13.5px] font-semibold text-zinc-100 truncate leading-tight">
                 {tile.label}
               </div>
-              {(tile.actionSummary || tile.subtitle) && (
-                <div className="text-[11px] text-zinc-400/90 font-mono truncate mt-0.5 leading-tight">
-                  {tile.actionSummary ?? tile.subtitle}
-                </div>
-              )}
+              <div
+                className={clsx(
+                  'text-[10.5px] font-mono truncate mt-0.5 leading-tight',
+                  style.silkscreen,
+                )}
+              >
+                {tile.actionSummary ?? tile.subtitle ?? '桌面端配置动作'}
+              </div>
             </div>
           </button>
         )
       })}
-
-      {editMode && (
-        <button
-          type="button"
-          onClick={handleAddTile}
-          className="min-h-[82px] rounded-2xl border border-dashed border-white/15 bg-white/[0.02] hover:bg-white/[0.05] flex flex-col items-center justify-center gap-1.5 text-zinc-400 transition-colors"
-        >
-          <Plus className="w-5 h-5" />
-          <span className="text-xs font-medium">添加按键</span>
-        </button>
-      )}
     </div>
   )
 }

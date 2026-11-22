@@ -15,13 +15,25 @@ import {
 } from '../protocol/types'
 import { DEFAULT_DEMO_DECK } from './defaultDeck'
 import {
+  cancelNativeVoiceStream,
+  clearNativeSessionAuth,
+  flushNativePointerDelta,
+  hasNativeBinaryPointer,
+  hasNativeControlArbiter,
+  hasNativeVoiceStream,
   isNativeShell,
+  sendNativeControlFrame,
+  sendNativePointerDelta,
   startNativeAudioCapture,
+  startNativeVoiceStream,
   stopNativeAudioCapture,
+  stopNativeVoiceStream,
+  syncNativeSessionAuth,
   type SavedHostProfile,
 } from './nativeBridge'
 
 export interface TransportAdapter {
+  readonly usesNativeArbiter?: boolean
   connect(handlers: {
     onOpen: () => void
     onMessage: (raw: string) => void
@@ -37,6 +49,7 @@ export interface SessionListener {
   onReady?: (payload: {
     hostId: string
     hostName: string
+    inputGeneration: number
     capabilities: HostCapabilities
     deckSnapshot: DeckSnapshot
     deckRevision: number
@@ -48,13 +61,20 @@ export interface SessionListener {
   onDeckConflict?: (latestSnapshot: DeckSnapshot, latestRevision: number, message: string) => void
   onContextChanged?: (context: ForegroundContext, revision: number) => void
   onCommandResult?: (requestId: string, ok: boolean, code?: string, message?: string) => void
-  onTextStatus?: (requestId: string, status: 'sent' | 'ok' | 'error' | 'unknown', message?: string) => void
+  onTextStatus?: (
+    requestId: string,
+    status: 'sent' | 'ok' | 'error' | 'unknown',
+    message?: string,
+  ) => void
   onError?: (message: string) => void
 }
 
 const BACKOFF_MS = [150, 300, 600, 1500]
 
 export class NativeWssTransport implements TransportAdapter {
+  readonly usesNativeArbiter = true
+  private fallbackWs: WebSocket | null = null
+
   constructor(
     private readonly url: string,
     private readonly hostId: string,
@@ -85,8 +105,6 @@ export class NativeWssTransport implements TransportAdapter {
     ws.onerror = () => handlers.onError('WebSocket 连接失败（局域网 WSS 需在原生 App 中建立私有信任）')
   }
 
-  private fallbackWs: WebSocket | null = null
-
   send(raw: string): boolean {
     if (isNativeShell() && window.AxonkeyNative) {
       return window.AxonkeyNative.sendWssText(raw)
@@ -110,6 +128,7 @@ export class NativeWssTransport implements TransportAdapter {
 
 /** Local loopback simulator so Mobile UI can be tested end-to-end without a live desktop host. */
 export class DemoLoopbackTransport implements TransportAdapter {
+  readonly usesNativeArbiter = false
   private onMessage: ((raw: string) => void) | null = null
   private onClose: ((code: number, reason: string) => void) | null = null
   private tickTimer: ReturnType<typeof setInterval> | null = null
@@ -117,6 +136,7 @@ export class DemoLoopbackTransport implements TransportAdapter {
   private deckRev = 1
   private ctxRev = 1
   private leaseId = 1
+  private inputGeneration = 1
   private sessionId = 'demo-session-1'
 
   connect(handlers: {
@@ -138,6 +158,7 @@ export class DemoLoopbackTransport implements TransportAdapter {
         type: 'server.ready',
         sessionId: this.sessionId,
         inputEpoch: 1,
+        inputGeneration: this.inputGeneration,
         leaseId: this.leaseId,
         leaseTtlMs: 750,
         tickIntervalMs: 250,
@@ -145,8 +166,12 @@ export class DemoLoopbackTransport implements TransportAdapter {
         hostName: 'Demo Desktop (模拟)',
         capabilities: {
           relativePointer: true,
+          absolutePointer: true,
+          binaryPointerV1: true,
+          binaryAudioV1: true,
           textCommit: true,
-          audioPcm16: false,
+          audioPcm16: true,
+          udpDiscoveryPort: 49671,
           platform: 'windows',
         },
         deckSnapshot: structuredClone(this.deck),
@@ -164,13 +189,22 @@ export class DemoLoopbackTransport implements TransportAdapter {
           type: 'server.tick',
           sessionId: this.sessionId,
           inputEpoch: 1,
+          inputGeneration: this.inputGeneration,
           leaseId: this.leaseId,
           leaseTtlMs: 750,
         })
       }, 250)
       return true
     }
-    if (msg.type === 'tile.activate' || msg.type === 'tile.hold.begin' || msg.type === 'tile.hold.end' || msg.type === 'pointer.button' || msg.type === 'text.commit') {
+    if (
+      msg.type === 'tile.activate' ||
+      msg.type === 'tile.hold.begin' ||
+      msg.type === 'tile.hold.end' ||
+      msg.type === 'pointer.button' ||
+      msg.type === 'text.commit' ||
+      msg.type === 'voice.begin' ||
+      msg.type === 'voice.end'
+    ) {
       this.emit({ type: 'command.result', requestId: msg.requestId, ok: true })
       return true
     }
@@ -233,16 +267,26 @@ export class MobileSessionClient {
   private transport: TransportAdapter | null = null
   private sessionId: string | null = null
   private inputEpoch = 0
+  private inputGeneration = 0
   private seq = 0
   private leaseId = 0
   private leaseExpiresAtMs = 0
   private contextRevision = 0
+  private capabilities: HostCapabilities | null = null
+
   private pendingTextRequests = new Set<string>()
   private pendingDeckRequests = new Map<string, number>()
 
+  private activeVoiceStreamId: number | null = null
+  private activeVoiceUsesNative = false
+  private activeVoiceUsesLegacy = false
+  private localVoiceCounter = 0
+
   private activeHost: SavedHostProfile | null = null
   private pendingPairOffer: PairingOfferQr | null = null
-  private transportFactory: ((host: SavedHostProfile) => TransportAdapter) | null = null
+  private transportFactory:
+    | ((host: SavedHostProfile, attempt: number) => TransportAdapter)
+    | null = null
   private reconnectAttempt = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private allowAutoReconnect = true
@@ -261,6 +305,14 @@ export class MobileSessionClient {
     return this.phase
   }
 
+  getInputGeneration(): number {
+    return this.inputGeneration
+  }
+
+  isVoiceActive(): boolean {
+    return this.activeVoiceStreamId !== null
+  }
+
   isInputReady(): boolean {
     return (
       this.phase === 'active' &&
@@ -269,9 +321,14 @@ export class MobileSessionClient {
     )
   }
 
-  connectWithPairing(offer: PairingOfferQr, transport: TransportAdapter): void {
+  connectWithPairing(
+    offer: PairingOfferQr,
+    transport: TransportAdapter,
+    reconnectFactory?: (host: SavedHostProfile, attempt: number) => TransportAdapter,
+  ): void {
     this.disconnect('switch_to_pair')
     this.pendingPairOffer = offer
+    this.transportFactory = reconnectFactory ?? null
     this.allowAutoReconnect = false
     this.setPhase('authenticating', '正在配对…')
     this.attachTransport(transport, () => {
@@ -285,7 +342,7 @@ export class MobileSessionClient {
 
   connectToHost(
     host: SavedHostProfile,
-    factory: (host: SavedHostProfile) => TransportAdapter,
+    factory: (host: SavedHostProfile, attempt: number) => TransportAdapter,
   ): void {
     this.disconnect('reconnect_explicit')
     this.activeHost = host
@@ -297,7 +354,7 @@ export class MobileSessionClient {
   }
 
   disconnect(reason = 'user_disconnect'): void {
-    stopNativeAudioCapture()
+    this.abortActiveVoiceIfNeeded(reason)
     this.allowAutoReconnect = false
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
@@ -311,16 +368,19 @@ export class MobileSessionClient {
         reason,
       })
     }
+    clearNativeSessionAuth()
     this.markPendingTextsUnknown()
     this.transport?.close(reason)
     this.transport = null
     this.sessionId = null
+    this.inputGeneration = 0
+    this.capabilities = null
     this.leaseExpiresAtMs = 0
     this.setPhase('disconnected')
   }
 
   handleVisibilityHidden(): void {
-    stopNativeAudioCapture()
+    this.abortActiveVoiceIfNeeded('paused')
     if (this.phase === 'active' && this.sessionId) {
       this.sendRaw({
         type: 'input.cancel',
@@ -328,12 +388,17 @@ export class MobileSessionClient {
         inputEpoch: this.inputEpoch,
         reason: 'app_backgrounded',
       })
+      clearNativeSessionAuth()
       this.leaseExpiresAtMs = 0
       this.setPhase('revoking', '应用切至后台，已暂停输入')
       this.transport?.close('app_backgrounded')
       this.transport = null
       this.sessionId = null
+      this.inputGeneration = 0
+      this.capabilities = null
       this.setPhase('disconnected', '回到前台将自动重连')
+    } else {
+      clearNativeSessionAuth()
     }
   }
 
@@ -349,14 +414,20 @@ export class MobileSessionClient {
     }
   }
 
+  flushPointerMotion(): void {
+    if (this.canUseNativeBinaryPointer()) {
+      flushNativePointerDelta()
+    }
+  }
+
   sendTileActivate(tileId: string, gesture: TileGestureKind): string | null {
     if (!this.isInputReady() || !this.sessionId) return null
     const requestId = this.nextRequestId('tile')
-    const ok = this.sendRaw({
+    const ok = this.sendSequenced({
       type: 'tile.activate',
       sessionId: this.sessionId,
       inputEpoch: this.inputEpoch,
-      seq: ++this.seq,
+      seq: 0,
       leaseId: this.leaseId,
       requestId,
       tileId,
@@ -369,11 +440,11 @@ export class MobileSessionClient {
     if (begin && !this.isInputReady()) return null
     if (!this.sessionId || this.phase !== 'active') return null
     const requestId = this.nextRequestId('hold')
-    const ok = this.sendRaw({
+    const ok = this.sendSequenced({
       type: begin ? 'tile.hold.begin' : 'tile.hold.end',
       sessionId: this.sessionId,
       inputEpoch: this.inputEpoch,
-      seq: ++this.seq,
+      seq: 0,
       leaseId: this.leaseId,
       requestId,
       tileId,
@@ -384,11 +455,15 @@ export class MobileSessionClient {
 
   sendPointerMotion(dx: number, dy: number): boolean {
     if (!this.isInputReady() || !this.sessionId) return false
-    return this.sendRaw({
+    if (dx === 0 && dy === 0) return true
+    if (this.canUseNativeBinaryPointer()) {
+      return sendNativePointerDelta(dx, dy)
+    }
+    return this.sendSequenced({
       type: 'pointer.motion',
       sessionId: this.sessionId,
       inputEpoch: this.inputEpoch,
-      seq: ++this.seq,
+      seq: 0,
       leaseId: this.leaseId,
       dx,
       dy,
@@ -397,11 +472,12 @@ export class MobileSessionClient {
 
   sendPointerScroll(x: number, y: number): boolean {
     if (!this.isInputReady() || !this.sessionId) return false
-    return this.sendRaw({
+    if (x === 0 && y === 0) return true
+    return this.sendSequenced({
       type: 'pointer.scroll',
       sessionId: this.sessionId,
       inputEpoch: this.inputEpoch,
-      seq: ++this.seq,
+      seq: 0,
       leaseId: this.leaseId,
       x,
       y,
@@ -415,12 +491,14 @@ export class MobileSessionClient {
   ): string | null {
     if (phase === 'down' && !this.isInputReady()) return null
     if (!this.sessionId || this.phase !== 'active') return null
+    // Flush any queued binary pointer delta BEFORE button edge so movement never reorders across click/drag!
+    this.flushPointerMotion()
     const requestId = this.nextRequestId('btn')
-    const ok = this.sendRaw({
+    const ok = this.sendSequenced({
       type: 'pointer.button',
       sessionId: this.sessionId,
       inputEpoch: this.inputEpoch,
-      seq: ++this.seq,
+      seq: 0,
       leaseId: this.leaseId,
       requestId,
       button,
@@ -433,11 +511,11 @@ export class MobileSessionClient {
   sendTextCommit(text: string, mode: TextCommitMode, submit: boolean): string | null {
     if (!this.isInputReady() || !this.sessionId || !text.trim()) return null
     const requestId = this.nextRequestId('txt')
-    const ok = this.sendRaw({
+    const ok = this.sendSequenced({
       type: 'text.commit',
       sessionId: this.sessionId,
       inputEpoch: this.inputEpoch,
-      seq: ++this.seq,
+      seq: 0,
       leaseId: this.leaseId,
       requestId,
       text,
@@ -468,6 +546,48 @@ export class MobileSessionClient {
 
   startVoiceStream(): boolean {
     if (!this.isInputReady() || !this.sessionId) return false
+    if (this.activeVoiceStreamId !== null) return true
+
+    const requestId = this.nextRequestId('voice')
+
+    // Path A: Native Android AKA1 binary audio + voice.begin under single sendLock
+    if (
+      this.usesNativeArbiter() &&
+      hasNativeVoiceStream() &&
+      this.capabilities?.binaryAudioV1 !== false
+    ) {
+      this.syncNativeAuth()
+      const streamId = startNativeVoiceStream(requestId)
+      if (streamId > 0) {
+        this.activeVoiceStreamId = streamId
+        this.activeVoiceUsesNative = true
+        this.activeVoiceUsesLegacy = false
+        return true
+      }
+      return false
+    }
+
+    // Path B: Protocol v2 JSON voice.begin (Demo Mode / Browser / Vitest)
+    if (this.capabilities?.binaryAudioV1) {
+      const streamId = ++this.localVoiceCounter
+      const ok = this.sendSequenced({
+        type: 'voice.begin',
+        sessionId: this.sessionId,
+        inputEpoch: this.inputEpoch,
+        inputGeneration: this.inputGeneration || 1,
+        seq: 0,
+        leaseId: this.leaseId,
+        requestId,
+        streamId,
+      })
+      if (!ok) return false
+      this.activeVoiceStreamId = streamId
+      this.activeVoiceUsesNative = false
+      this.activeVoiceUsesLegacy = false
+      return true
+    }
+
+    // Path C: Legacy v1 host fallback
     const sent = this.sendRaw({
       type: 'audio.start',
       sessionId: this.sessionId,
@@ -482,21 +602,118 @@ export class MobileSessionClient {
         return false
       }
     }
+    this.activeVoiceStreamId = ++this.localVoiceCounter
+    this.activeVoiceUsesNative = false
+    this.activeVoiceUsesLegacy = true
     return true
   }
 
   stopVoiceStream(): void {
-    stopNativeAudioCapture()
-    if (this.sessionId && this.phase === 'active') {
-      this.sendRaw({ type: 'audio.stop', sessionId: this.sessionId })
+    if (this.activeVoiceStreamId === null) return
+    const streamId = this.activeVoiceStreamId
+    const usedNative = this.activeVoiceUsesNative
+    const usedLegacy = this.activeVoiceUsesLegacy
+    this.activeVoiceStreamId = null
+    this.activeVoiceUsesNative = false
+    this.activeVoiceUsesLegacy = false
+
+    if (usedNative) {
+      stopNativeVoiceStream(streamId, this.nextRequestId('voice-end'))
+      return
     }
+
+    if (usedLegacy) {
+      stopNativeAudioCapture()
+      if (this.sessionId && this.phase === 'active') {
+        this.sendRaw({ type: 'audio.stop', sessionId: this.sessionId })
+      }
+      return
+    }
+
+    if (this.sessionId && this.phase === 'active') {
+      this.sendSequenced({
+        type: 'voice.end',
+        sessionId: this.sessionId,
+        inputEpoch: this.inputEpoch,
+        inputGeneration: this.inputGeneration || 1,
+        seq: 0,
+        requestId: this.nextRequestId('voice-end'),
+        streamId,
+        finalSampleExclusive: 0,
+      })
+    }
+  }
+
+  cancelVoiceStream(reason = 'cancelled'): void {
+    this.abortActiveVoiceIfNeeded(reason)
+  }
+
+  private abortActiveVoiceIfNeeded(reason: string): void {
+    if (this.activeVoiceStreamId === null) {
+      stopNativeAudioCapture()
+      return
+    }
+    const streamId = this.activeVoiceStreamId
+    const usedNative = this.activeVoiceUsesNative
+    const usedLegacy = this.activeVoiceUsesLegacy
+    this.activeVoiceStreamId = null
+    this.activeVoiceUsesNative = false
+    this.activeVoiceUsesLegacy = false
+
+    if (usedNative) {
+      cancelNativeVoiceStream(streamId, reason)
+      return
+    }
+
+    if (usedLegacy) {
+      stopNativeAudioCapture()
+      if (this.sessionId && this.phase === 'active') {
+        this.sendRaw({ type: 'audio.stop', sessionId: this.sessionId })
+      }
+      return
+    }
+
+    if (this.sessionId && this.phase === 'active') {
+      this.sendRaw({
+        type: 'voice.cancel',
+        sessionId: this.sessionId,
+        inputEpoch: this.inputEpoch,
+        streamId,
+        reason,
+      })
+    }
+  }
+
+  private usesNativeArbiter(): boolean {
+    return Boolean(this.transport?.usesNativeArbiter) && hasNativeControlArbiter()
+  }
+
+  private canUseNativeBinaryPointer(): boolean {
+    return (
+      Boolean(this.transport?.usesNativeArbiter) &&
+      hasNativeBinaryPointer() &&
+      Boolean(this.capabilities?.binaryPointerV1)
+    )
+  }
+
+  private syncNativeAuth(): void {
+    if (!this.sessionId || this.phase !== 'active' || !this.transport?.usesNativeArbiter) {
+      clearNativeSessionAuth()
+      return
+    }
+    syncNativeSessionAuth(
+      this.sessionId,
+      this.inputEpoch,
+      this.inputGeneration,
+      this.leaseId,
+    )
   }
 
   private openHostConnection(): void {
     if (!this.activeHost || !this.transportFactory) return
     const host = this.activeHost
     this.setPhase('authenticating', `正在连接 ${host.hostName}…`)
-    const adapter = this.transportFactory(host)
+    const adapter = this.transportFactory(host, this.reconnectAttempt)
     this.attachTransport(adapter, () => {
       this.setPhase('synchronizing', '正在同步配置…')
       this.sendRaw({
@@ -561,15 +778,19 @@ export class MobileSessionClient {
       case 'server.ready': {
         this.sessionId = msg.sessionId
         this.inputEpoch = msg.inputEpoch
+        this.inputGeneration = msg.inputGeneration ?? 1
         this.seq = 0
         this.leaseId = msg.leaseId
         this.leaseExpiresAtMs = this.now() + msg.leaseTtlMs
+        this.capabilities = msg.capabilities
         this.contextRevision = msg.contextRevision
         this.reconnectAttempt = 0
         this.setPhase('active')
+        this.syncNativeAuth()
         this.listener.onReady?.({
           hostId: msg.hostId,
           hostName: msg.hostName,
+          inputGeneration: this.inputGeneration,
           capabilities: msg.capabilities,
           deckSnapshot: msg.deckSnapshot,
           deckRevision: msg.deckRevision,
@@ -581,7 +802,11 @@ export class MobileSessionClient {
       case 'server.tick': {
         if (msg.sessionId !== this.sessionId || msg.inputEpoch !== this.inputEpoch) return
         this.leaseId = msg.leaseId
+        if (msg.inputGeneration !== undefined) {
+          this.inputGeneration = msg.inputGeneration
+        }
         this.leaseExpiresAtMs = this.now() + msg.leaseTtlMs
+        this.syncNativeAuth()
         this.sendRaw({
           type: 'client.alive',
           sessionId: this.sessionId,
@@ -591,6 +816,10 @@ export class MobileSessionClient {
       }
       case 'deck.snapshot': {
         this.inputEpoch = msg.inputEpoch
+        if (msg.inputGeneration !== undefined) {
+          this.inputGeneration = msg.inputGeneration
+        }
+        this.syncNativeAuth()
         this.listener.onDeckUpdate?.(msg.deckSnapshot, msg.deckRevision)
         break
       }
@@ -627,9 +856,13 @@ export class MobileSessionClient {
       }
       case 'session.revoked': {
         // Never auto-reclaim control when replaced or revoked by desktop.
+        this.abortActiveVoiceIfNeeded('session_revoked')
         this.allowAutoReconnect = false
+        clearNativeSessionAuth()
         this.markPendingTextsUnknown()
         this.sessionId = null
+        this.inputGeneration = 0
+        this.capabilities = null
         this.leaseExpiresAtMs = 0
         this.setPhase('closed', `会话已撤销 (${msg.reason})`)
         this.transport?.close('revoked')
@@ -644,8 +877,14 @@ export class MobileSessionClient {
   }
 
   private handleTransportClosed(reason: string): void {
+    this.activeVoiceStreamId = null
+    this.activeVoiceUsesNative = false
+    this.activeVoiceUsesLegacy = false
+    clearNativeSessionAuth()
     this.markPendingTextsUnknown()
     this.sessionId = null
+    this.inputGeneration = 0
+    this.capabilities = null
     this.leaseExpiresAtMs = 0
     this.transport = null
     if (this.phase === 'closed') return
@@ -668,8 +907,21 @@ export class MobileSessionClient {
     this.pendingTextRequests.clear()
   }
 
+  private sendSequenced<T extends ClientMessage & { seq: number }>(msg: T): boolean {
+    if (!this.transport) return false
+    if (this.usesNativeArbiter()) {
+      const payload: T = { ...msg, seq: 0 }
+      return sendNativeControlFrame(JSON.stringify(payload))
+    }
+    const payload: T = { ...msg, seq: ++this.seq }
+    return this.transport.send(JSON.stringify(payload))
+  }
+
   private sendRaw(msg: ClientMessage): boolean {
     if (!this.transport) return false
+    if (this.usesNativeArbiter()) {
+      return sendNativeControlFrame(JSON.stringify(msg))
+    }
     return this.transport.send(JSON.stringify(msg))
   }
 

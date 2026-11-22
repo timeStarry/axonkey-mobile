@@ -8,6 +8,7 @@ export const DEFAULT_DEMO_DECK: DeckSnapshot = {
   scrollSensitivity: 1.0,
   doubleClickWindowMs: 300,
   longPressWindowMs: 600,
+  voiceBindingSummary: 'Alt',
   pages: [
     {
       id: 'classic-remote',

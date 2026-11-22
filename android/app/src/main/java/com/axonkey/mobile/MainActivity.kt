@@ -3,10 +3,6 @@ package com.axonkey.mobile
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
@@ -21,7 +17,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.webkit.WebViewAssetLoader
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -30,23 +25,27 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import okio.ByteString.Companion.toByteString
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.net.InetAddress
+import java.net.Socket
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
+import java.util.Locale
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
-    private var activeSocket: WebSocket? = null
-    private val audioCapturing = AtomicBoolean(false)
-    private var audioThread: Thread? = null
+
+    private val arbiter = OutboundArbiter()
+    private lateinit var gyroController: GyroController
+    private lateinit var voiceController: VoiceCaptureController
+    private lateinit var lanDiscoveryClient: LanDiscoveryClient
 
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         val raw = result.contents
@@ -59,6 +58,7 @@ class MainActivity : AppCompatActivity() {
     private val audioPermLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (!granted) {
+                performHaptic("error")
                 emitJs("window.__axonkeyNativeOnError && window.__axonkeyNativeOnError('需要麦克风权限才能发送语音');")
             }
         }
@@ -66,6 +66,42 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        gyroController = GyroController(
+            context = this,
+            arbiter = arbiter,
+            onGyroStateChanged = { state ->
+                val quoted = JSONObject.quote(state)
+                emitJs("window.__axonkeyNativeOnGyroState && window.__axonkeyNativeOnGyroState($quoted);")
+            },
+            onRecenterHaptic = {
+                performHaptic("recenter")
+            }
+        )
+
+        voiceController = VoiceCaptureController(
+            context = this,
+            arbiter = arbiter,
+            onRequestRecordPermission = {
+                runOnUiThread {
+                    if (!isDestroyed) {
+                        audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                }
+            },
+            onVoiceLevel = { level ->
+                val formatted = String.format(Locale.US, "%.4f", level.coerceIn(0.0, 1.0))
+                emitJs("window.__axonkeyNativeOnVoiceLevel && window.__axonkeyNativeOnVoiceLevel($formatted);")
+            }
+        )
+
+        lanDiscoveryClient = LanDiscoveryClient(
+            context = this,
+            onHostsDiscovered = { jsonArrayString ->
+                val quoted = JSONObject.quote(jsonArrayString)
+                emitJs("window.__axonkeyNativeOnHostsDiscovered && window.__axonkeyNativeOnHostsDiscovered($quoted);")
+            }
+        )
 
         val assetLoader = WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
@@ -75,6 +111,7 @@ class MainActivity : AppCompatActivity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
+            overScrollMode = WebView.OVER_SCROLL_NEVER
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView,
@@ -90,90 +127,146 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        stopAudioInternal()
+        arbiter.discardPendingPointerDelta()
+        gyroController.onPause()
+        voiceController.onPause()
         emitJs("window.__axonkeyNativeOnLifecycle && window.__axonkeyNativeOnLifecycle('paused');")
     }
 
     override fun onResume() {
         super.onResume()
+        gyroController.onResume()
         emitJs("window.__axonkeyNativeOnLifecycle && window.__axonkeyNativeOnLifecycle('resumed');")
     }
 
     override fun onDestroy() {
-        stopAudioInternal()
-        activeSocket?.close(1000, "activity_destroyed")
-        activeSocket = null
+        voiceController.onSocketClosedOrFailed()
+        gyroController.destroy()
+        lanDiscoveryClient.shutdown()
+        arbiter.shutdown()
         super.onDestroy()
-    }
-
-    private fun stopAudioInternal() {
-        audioCapturing.set(false)
-        audioThread?.interrupt()
-        audioThread = null
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun startAudioInternal(): Boolean {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            runOnUiThread { audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO) }
-            return false
-        }
-        val socket = activeSocket ?: return false
-        stopAudioInternal()
-
-        val sampleRate = 16000
-        val channelConfig = AudioFormat.CHANNEL_IN_MONO
-        val encoding = AudioFormat.ENCODING_PCM_16BIT
-        val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, encoding)
-        if (minBuf <= 0) return false
-        val frameBytes = 640 // 20ms @ 16kHz mono s16le
-
-        val recorder = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            sampleRate,
-            channelConfig,
-            encoding,
-            maxOf(minBuf, frameBytes * 4)
-        )
-        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
-            recorder.release()
-            return false
-        }
-
-        audioCapturing.set(true)
-        audioThread = Thread {
-            val buf = ByteArray(frameBytes)
-            try {
-                recorder.startRecording()
-                while (audioCapturing.get() && !Thread.currentThread().isInterrupted) {
-                    val read = recorder.read(buf, 0, buf.size)
-                    if (read > 0) {
-                        if (!socket.send(buf.toByteString(0, read))) {
-                            break
-                        }
-                    }
-                }
-            } catch (_: Exception) {
-            } finally {
-                try {
-                    recorder.stop()
-                } catch (_: Exception) {
-                }
-                recorder.release()
-                audioCapturing.set(false)
-            }
-        }.apply {
-            name = "axonkey-pcm-capture"
-            start()
-        }
-        return true
     }
 
     private fun emitJs(script: String) {
         runOnUiThread {
-            webView.evaluateJavascript(script, null)
+            if (!isDestroyed && ::webView.isInitialized) {
+                webView.evaluateJavascript(script, null)
+            }
+        }
+    }
+
+    private fun resolveVibrator(): Vibrator? {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun performHaptic(kind: String) {
+        val vibrator = resolveVibrator() ?: return
+        if (!vibrator.hasVibrator()) return
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val composed = buildPrimitiveEffectApi30(vibrator, kind)
+                if (composed != null) {
+                    vibrator.vibrate(composed)
+                    return
+                }
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                when (kind) {
+                    "tap" -> {
+                        vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
+                        return
+                    }
+                    "confirm" -> {
+                        vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
+                        return
+                    }
+                    "heavy" -> {
+                        vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
+                        return
+                    }
+                    "recenter" -> {
+                        vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK))
+                        return
+                    }
+                }
+            }
+
+            val effect = when (kind) {
+                "tap" -> VibrationEffect.createOneShot(9L, 120)
+                "confirm" -> VibrationEffect.createOneShot(14L, 190)
+                "heavy" -> VibrationEffect.createOneShot(22L, 255)
+                "voiceStart" -> VibrationEffect.createWaveform(
+                    longArrayOf(0L, 10L, 20L, 16L),
+                    intArrayOf(0, 130, 0, 235),
+                    -1
+                )
+                "voiceStop" -> VibrationEffect.createWaveform(
+                    longArrayOf(0L, 13L, 16L, 8L),
+                    intArrayOf(0, 195, 0, 110),
+                    -1
+                )
+                "recenter" -> VibrationEffect.createWaveform(
+                    longArrayOf(0L, 11L, 32L, 15L),
+                    intArrayOf(0, 180, 0, 255),
+                    -1
+                )
+                "error" -> VibrationEffect.createWaveform(
+                    longArrayOf(0L, 24L, 38L, 28L),
+                    intArrayOf(0, 255, 0, 225),
+                    -1
+                )
+                else -> VibrationEffect.createOneShot(10L, VibrationEffect.DEFAULT_AMPLITUDE)
+            }
+            vibrator.vibrate(effect)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun buildPrimitiveEffectApi30(vibrator: Vibrator, kind: String): VibrationEffect? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val canClick = vibrator.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_CLICK)
+        val canTick = vibrator.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_TICK)
+        if (!canClick && !canTick) return null
+
+        val comp = VibrationEffect.startComposition()
+        return when (kind) {
+            "tap" -> if (canTick) {
+                comp.addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 0.65f).compose()
+            } else null
+            "confirm" -> if (canClick) {
+                comp.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.85f).compose()
+            } else null
+            "heavy" -> if (canClick) {
+                comp.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 1.0f).compose()
+            } else null
+            "voiceStart" -> if (canTick && canClick) {
+                comp.addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 0.50f)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.92f, 18)
+                    .compose()
+            } else null
+            "voiceStop" -> if (canTick && canClick) {
+                comp.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.75f)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 0.45f, 16)
+                    .compose()
+            } else null
+            "recenter" -> if (canClick) {
+                comp.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.70f)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 1.0f, 34)
+                    .compose()
+            } else null
+            else -> null
         }
     }
 
@@ -194,8 +287,10 @@ class MainActivity : AppCompatActivity() {
             init(null, arrayOf(trustManager), null)
         }
 
+        val lowLatencySslFactory = TcpNoDelaySslSocketFactory(sslContext.socketFactory)
+
         return OkHttpClient.Builder()
-            .sslSocketFactory(sslContext.socketFactory, trustManager)
+            .sslSocketFactory(lowLatencySslFactory, trustManager)
             .hostnameVerifier { _, session ->
                 session.peerCertificates.isNotEmpty()
             }
@@ -209,20 +304,7 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun haptic(kind: String) {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                vm.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            }
-            val durationMs = when (kind) {
-                "heavy" -> 22L
-                "error" -> 35L
-                "confirm" -> 16L
-                else -> 10L
-            }
-            vibrator.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE))
+            performHaptic(kind)
         }
 
         @JavascriptInterface
@@ -248,46 +330,65 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
-        fun startAudioCapture(): Boolean = startAudioInternal()
+        fun startAudioCapture(): Boolean = voiceController.startLegacyCapture()
 
         @JavascriptInterface
         fun stopAudioCapture() {
-            stopAudioInternal()
+            voiceController.stopLegacyCapture()
         }
 
         @JavascriptInterface
         fun connectWss(url: String, hostId: String, caCertDerB64: String, subprotocol: String) {
-            stopAudioInternal()
-            activeSocket?.close(1000, "reconnect")
+            voiceController.onSocketClosedOrFailed()
+            gyroController.onAuthChanged(false)
+            val prevSocket = arbiter.prepareNewConnection()
+            prevSocket?.close(1000, "reconnect")
+
             try {
                 val client = buildPinnedClient(hostId, caCertDerB64)
                 val req = Request.Builder()
                     .url(url)
                     .header("Sec-WebSocket-Protocol", subprotocol)
                     .build()
-                activeSocket = client.newWebSocket(req, object : WebSocketListener() {
+                val listener = object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) {
+                        if (!arbiter.isCurrentSocket(webSocket)) return
                         emitJs("window.__axonkeyNativeOnOpen && window.__axonkeyNativeOnOpen();")
                     }
 
                     override fun onMessage(webSocket: WebSocket, text: String) {
+                        if (!arbiter.isCurrentSocket(webSocket)) return
                         val quoted = JSONObject.quote(text)
                         emitJs("window.__axonkeyNativeOnMessage && window.__axonkeyNativeOnMessage($quoted);")
                     }
 
                     override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                        stopAudioInternal()
+                        if (!arbiter.detachSocketIfCurrent(webSocket)) return
+                        voiceController.onSocketClosedOrFailed()
+                        gyroController.onAuthChanged(false)
+                        webSocket.close(code, reason)
+                        val quoted = JSONObject.quote(reason)
+                        emitJs("window.__axonkeyNativeOnClose && window.__axonkeyNativeOnClose($code, $quoted);")
+                    }
+
+                    override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                        if (!arbiter.detachSocketIfCurrent(webSocket)) return
+                        voiceController.onSocketClosedOrFailed()
+                        gyroController.onAuthChanged(false)
                         val quoted = JSONObject.quote(reason)
                         emitJs("window.__axonkeyNativeOnClose && window.__axonkeyNativeOnClose($code, $quoted);")
                     }
 
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                        stopAudioInternal()
+                        if (!arbiter.detachSocketIfCurrent(webSocket)) return
+                        voiceController.onSocketClosedOrFailed()
+                        gyroController.onAuthChanged(false)
                         val quoted = JSONObject.quote(t.message ?: "TLS/WSS 连接失败")
                         emitJs("window.__axonkeyNativeOnError && window.__axonkeyNativeOnError($quoted);")
                         emitJs("window.__axonkeyNativeOnClose && window.__axonkeyNativeOnClose(1006, $quoted);")
                     }
-                })
+                }
+                arbiter.openSocket { client.newWebSocket(req, listener) }
             } catch (e: Exception) {
                 val quoted = JSONObject.quote(e.message ?: "无法建立安全连接")
                 emitJs("window.__axonkeyNativeOnError && window.__axonkeyNativeOnError($quoted);")
@@ -295,13 +396,90 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
-        fun sendWssText(payload: String): Boolean = activeSocket?.send(payload) ?: false
+        fun sendWssText(payload: String): Boolean = arbiter.sendRawText(payload)
 
         @JavascriptInterface
         fun closeWss(reason: String) {
-            stopAudioInternal()
-            activeSocket?.close(1000, reason)
-            activeSocket = null
+            voiceController.onSocketClosedOrFailed()
+            gyroController.onAuthChanged(false)
+            arbiter.detachAndClose(1000, reason)
+        }
+
+        @JavascriptInterface
+        fun syncSessionAuth(
+            sessionId: String,
+            inputEpoch: Double,
+            inputGeneration: Double,
+            leaseId: Double
+        ) {
+            val epochLong = if (inputEpoch.isFinite()) inputEpoch.toLong() else 0L
+            val genLong = if (inputGeneration.isFinite()) inputGeneration.toLong() else 0L
+            val leaseLong = if (leaseId.isFinite()) leaseId.toLong() else 0L
+
+            val (prev, next) = arbiter.updateSessionAuth(
+                newSessionId = sessionId,
+                newInputEpoch = epochLong,
+                newInputGeneration = genLong,
+                newLeaseId = leaseLong
+            )
+            if (!next.isAuthorized) {
+                voiceController.onAuthInvalidated()
+                gyroController.onAuthChanged(false)
+            } else {
+                if (
+                    prev.isAuthorized &&
+                    (prev.sessionId != next.sessionId || prev.inputGeneration != next.inputGeneration)
+                ) {
+                    voiceController.onAuthInvalidated()
+                }
+                gyroController.onAuthChanged(true)
+            }
+        }
+
+        @JavascriptInterface
+        fun sendControlFrame(jsonPayload: String): Boolean = arbiter.sendControlFrame(jsonPayload)
+
+        @JavascriptInterface
+        fun sendPointerDelta(dx: Double, dy: Double) {
+            arbiter.sendPointerDelta(dx, dy)
+        }
+
+        @JavascriptInterface
+        fun flushPointerDelta() {
+            arbiter.flushPointerDelta()
+        }
+
+        @JavascriptInterface
+        fun setGyroConfig(mode: String, sensitivity: Double) {
+            gyroController.setConfig(mode, sensitivity)
+        }
+
+        @JavascriptInterface
+        fun setGyroClutch(engaged: Boolean) {
+            gyroController.setClutch(engaged)
+        }
+
+        @JavascriptInterface
+        fun recenterGyro() {
+            gyroController.recenter()
+        }
+
+        @JavascriptInterface
+        fun startVoiceStream(requestId: String): Double = voiceController.startVoiceStream(requestId)
+
+        @JavascriptInterface
+        fun stopVoiceStream(streamId: Double, requestId: String) {
+            voiceController.stopVoiceStream(streamId, requestId)
+        }
+
+        @JavascriptInterface
+        fun cancelVoiceStream(streamId: Double, reason: String) {
+            voiceController.cancelVoiceStream(streamId, reason)
+        }
+
+        @JavascriptInterface
+        fun discoverLanHosts(timeoutMs: Int) {
+            lanDiscoveryClient.discover(timeoutMs)
         }
 
         @JavascriptInterface
@@ -328,5 +506,50 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putString("hosts", "[]").apply()
             }
         }
+    }
+}
+
+/**
+ * Enables TCP_NODELAY on every TLS WebSocket socket so 40-byte AKP1 pointer frames
+ * and 10ms AKA1 voice frames are never delayed by Nagle's algorithm.
+ */
+private class TcpNoDelaySslSocketFactory(
+    private val delegate: SSLSocketFactory
+) : SSLSocketFactory() {
+    override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
+
+    override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
+
+    override fun createSocket(s: Socket?, host: String?, port: Int, autoClose: Boolean): Socket =
+        configure(delegate.createSocket(s, host, port, autoClose))
+
+    override fun createSocket(host: String?, port: Int): Socket =
+        configure(delegate.createSocket(host, port))
+
+    override fun createSocket(
+        host: String?,
+        port: Int,
+        localHost: InetAddress?,
+        localPort: Int
+    ): Socket = configure(delegate.createSocket(host, port, localHost, localPort))
+
+    override fun createSocket(host: InetAddress?, port: Int): Socket =
+        configure(delegate.createSocket(host, port))
+
+    override fun createSocket(
+        address: InetAddress?,
+        port: Int,
+        localAddress: InetAddress?,
+        localPort: Int
+    ): Socket = configure(delegate.createSocket(address, port, localAddress, localPort))
+
+    override fun createSocket(): Socket = configure(delegate.createSocket())
+
+    private fun configure(socket: Socket): Socket {
+        try {
+            socket.tcpNoDelay = true
+        } catch (_: Exception) {
+        }
+        return socket
     }
 }

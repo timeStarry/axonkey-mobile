@@ -6,6 +6,11 @@ export interface TrackpadCallbacks {
   onButton: (button: PointerButtonName, phase: PointerButtonPhase, pressId: string) => void
 }
 
+export interface TrackpadScheduler {
+  requestFrame: (cb: () => void) => number
+  cancelFrame: (id: number) => void
+}
+
 interface ActiveContact {
   x: number
   y: number
@@ -16,7 +21,22 @@ interface ActiveContact {
 
 const TAP_MAX_DISTANCE = 8
 const TAP_MAX_DURATION_MS = 220
-const BATCH_INTERVAL_MS = 16
+const DOUBLE_TAP_DRAG_WINDOW_MS = 260
+const DOUBLE_TAP_MAX_DIST = 26
+
+const defaultScheduler: TrackpadScheduler = {
+  requestFrame: (cb) =>
+    typeof globalThis.requestAnimationFrame === 'function'
+      ? globalThis.requestAnimationFrame(() => cb())
+      : (setTimeout(cb, 16) as unknown as number),
+  cancelFrame: (id) => {
+    if (typeof globalThis.cancelAnimationFrame === 'function') {
+      globalThis.cancelAnimationFrame(id)
+    } else {
+      clearTimeout(id)
+    }
+  },
+}
 
 let btnSeq = 1
 function nextButtonPressId(button: PointerButtonName): string {
@@ -28,23 +48,33 @@ export class TrackpadController {
   private readonly contacts = new Map<number, ActiveContact>()
   private readonly heldButtons = new Map<PointerButtonName, string>()
   private readonly now: () => number
+  private readonly scheduler: TrackpadScheduler
 
   private pendingDx = 0
   private pendingDy = 0
   private pendingScrollX = 0
   private pendingScrollY = 0
-  private lastFlushMs = 0
+  private rafId: number | null = null
 
   private gestureMaxFingers = 0
   private gestureMoved = false
   private gestureStartMs = 0
   private twoFingerCentroid: { x: number; y: number } | null = null
 
+  // 1-finger double-tap-and-slide drag state
+  private lastSingleTapUpMs = 0
+  private lastSingleTapX = 0
+  private lastSingleTapY = 0
+  private eligibleForTapDrag = false
+  private tapDragActive = false
+
   constructor(
     private readonly callbacks: TrackpadCallbacks,
     now?: () => number,
+    scheduler?: TrackpadScheduler,
   ) {
     this.now = now ?? (() => performance.now())
+    this.scheduler = scheduler ?? defaultScheduler
   }
 
   onPointerDown(pointerId: number, x: number, y: number): void {
@@ -53,7 +83,18 @@ export class TrackpadController {
       this.gestureMaxFingers = 0
       this.gestureMoved = false
       this.gestureStartMs = ts
+      this.eligibleForTapDrag =
+        this.lastSingleTapUpMs > 0 &&
+        ts - this.lastSingleTapUpMs <= DOUBLE_TAP_DRAG_WINDOW_MS &&
+        Math.hypot(x - this.lastSingleTapX, y - this.lastSingleTapY) <= DOUBLE_TAP_MAX_DIST
+    } else {
+      this.eligibleForTapDrag = false
+      if (this.tapDragActive) {
+        this.tapDragActive = false
+        this.setButton('left', false)
+      }
     }
+
     this.contacts.set(pointerId, { x, y, startX: x, startY: y, startMs: ts })
     this.gestureMaxFingers = Math.max(this.gestureMaxFingers, this.contacts.size)
 
@@ -76,22 +117,32 @@ export class TrackpadController {
     const totalDist = Math.hypot(x - contact.startX, y - contact.startY)
     if (totalDist > TAP_MAX_DISTANCE) {
       this.gestureMoved = true
+      if (this.contacts.size === 1 && this.eligibleForTapDrag && !this.tapDragActive) {
+        this.eligibleForTapDrag = false
+        this.tapDragActive = true
+        this.lastSingleTapUpMs = 0
+        this.setButton('left', true)
+      }
     }
 
     if (this.contacts.size === 1) {
-      this.pendingDx += dx
-      this.pendingDy += dy
-      this.maybeFlush()
+      if (dx !== 0 || dy !== 0) {
+        this.pendingDx += dx
+        this.pendingDy += dy
+        this.scheduleFlush()
+      }
     } else if (this.contacts.size >= 2) {
       const nextCentroid = this.computeCentroid()
       if (this.twoFingerCentroid && nextCentroid) {
         const sdx = nextCentroid.x - this.twoFingerCentroid.x
         const sdy = nextCentroid.y - this.twoFingerCentroid.y
-        // Positive Y scroll moves content naturally.
-        this.pendingScrollX += sdx * 0.25
-        this.pendingScrollY += sdy * 0.25
         this.twoFingerCentroid = nextCentroid
-        this.maybeFlush()
+        if (sdx !== 0 || sdy !== 0) {
+          // Positive Y scroll moves content naturally.
+          this.pendingScrollX += sdx * 0.25
+          this.pendingScrollY += sdy * 0.25
+          this.scheduleFlush()
+        }
       } else {
         this.twoFingerCentroid = nextCentroid
       }
@@ -99,7 +150,10 @@ export class TrackpadController {
   }
 
   onPointerUp(pointerId: number): void {
-    if (!this.contacts.has(pointerId)) return
+    const contact = this.contacts.get(pointerId)
+    if (!contact) return
+
+    // Synchronously flush any unsent residual delta BEFORE tap or drag-end button message!
     this.flush()
     this.contacts.delete(pointerId)
 
@@ -108,27 +162,57 @@ export class TrackpadController {
     }
 
     if (this.contacts.size === 0) {
-      const elapsed = this.now() - this.gestureStartMs
-      if (!this.gestureMoved && elapsed <= TAP_MAX_DURATION_MS) {
-        const button: PointerButtonName = this.gestureMaxFingers >= 2 ? 'right' : 'left'
-        const pressId = nextButtonPressId(button)
-        this.callbacks.onButton(button, 'down', pressId)
-        this.callbacks.onButton(button, 'up', pressId)
+      if (this.tapDragActive) {
+        this.tapDragActive = false
+        this.eligibleForTapDrag = false
+        this.setButton('left', false)
+      } else {
+        const ts = this.now()
+        const elapsed = ts - this.gestureStartMs
+        if (!this.gestureMoved && elapsed <= TAP_MAX_DURATION_MS) {
+          const button: PointerButtonName = this.gestureMaxFingers >= 2 ? 'right' : 'left'
+          const pressId = nextButtonPressId(button)
+          this.callbacks.onButton(button, 'down', pressId)
+          this.callbacks.onButton(button, 'up', pressId)
+
+          if (button === 'left') {
+            if (this.eligibleForTapDrag) {
+              this.lastSingleTapUpMs = 0
+              this.eligibleForTapDrag = false
+            } else {
+              this.lastSingleTapUpMs = ts
+              this.lastSingleTapX = contact.x
+              this.lastSingleTapY = contact.y
+            }
+          } else {
+            this.lastSingleTapUpMs = 0
+          }
+        } else {
+          this.lastSingleTapUpMs = 0
+        }
       }
       this.gestureMaxFingers = 0
       this.gestureMoved = false
+      this.eligibleForTapDrag = false
     }
   }
 
   onPointerCancel(pointerId: number): void {
     if (!this.contacts.has(pointerId)) return
     this.contacts.delete(pointerId)
+    this.cancelScheduledFlush()
     this.twoFingerCentroid = null
+    // Discard unsent residual delta on cancel (never inject cancelled movement).
     this.pendingDx = 0
     this.pendingDy = 0
     this.pendingScrollX = 0
     this.pendingScrollY = 0
     this.gestureMoved = true
+    this.tapDragActive = false
+    this.eligibleForTapDrag = false
+    this.lastSingleTapUpMs = 0
+    // Release any held drag button so desktop never stays stuck in drag state.
+    this.releaseHeldButtons()
   }
 
   setButton(button: PointerButtonName, down: boolean): void {
@@ -151,7 +235,12 @@ export class TrackpadController {
     return this.heldButtons.has(button)
   }
 
+  hasPendingFrame(): boolean {
+    return this.rafId !== null
+  }
+
   flush(): void {
+    this.cancelScheduledFlush()
     if (this.pendingDx !== 0 || this.pendingDy !== 0) {
       const dx = this.pendingDx
       const dy = this.pendingDy
@@ -166,27 +255,44 @@ export class TrackpadController {
       this.pendingScrollY = 0
       this.callbacks.onScroll(sx, sy)
     }
-    this.lastFlushMs = this.now()
   }
 
   cancelAll(): void {
     this.contacts.clear()
+    this.cancelScheduledFlush()
     this.twoFingerCentroid = null
     this.pendingDx = 0
     this.pendingDy = 0
     this.pendingScrollX = 0
     this.pendingScrollY = 0
     this.gestureMoved = true
+    this.tapDragActive = false
+    this.eligibleForTapDrag = false
+    this.lastSingleTapUpMs = 0
+    this.releaseHeldButtons()
+  }
+
+  private scheduleFlush(): void {
+    if (this.rafId !== null) return
+    this.rafId = this.scheduler.requestFrame(() => {
+      this.rafId = null
+      this.flush()
+    })
+  }
+
+  private cancelScheduledFlush(): void {
+    if (this.rafId !== null) {
+      const id = this.rafId
+      this.rafId = null
+      this.scheduler.cancelFrame(id)
+    }
+  }
+
+  private releaseHeldButtons(): void {
     const entries = Array.from(this.heldButtons.entries())
     this.heldButtons.clear()
     for (const [button, pressId] of entries) {
       this.callbacks.onButton(button, 'up', pressId)
-    }
-  }
-
-  private maybeFlush(): void {
-    if (this.now() - this.lastFlushMs >= BATCH_INTERVAL_MS) {
-      this.flush()
     }
   }
 
