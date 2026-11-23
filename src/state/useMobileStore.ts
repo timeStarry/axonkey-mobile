@@ -2,14 +2,29 @@ import { create } from 'zustand'
 import type {
   DeckLayoutPatch,
   DeckSnapshot,
+  DeckZoneKind,
   DiscoveredLanHost,
   ForegroundContext,
   GyroGuardKind,
   HostCapabilities,
+  MobileDeckPage,
+  MobileDeckZone,
+  MobileTile,
   PairingOfferQr,
   SessionPhase,
   TextCommitMode,
 } from '../protocol/types'
+import {
+  MAX_TILES_PER_PAGE,
+  MAX_ZONES_PER_PAGE,
+  createNewCustomTile,
+  createNewZone,
+  createPageFromTemplate,
+  cycleBentoSpan,
+  normalizeDpadSlotIds,
+  normalizePageZones,
+  type PageTemplateId,
+} from '../input/bentoLayout'
 import { DEFAULT_DEMO_DECK } from '../transport/defaultDeck'
 import {
   discoverNativeLanHosts,
@@ -52,6 +67,12 @@ export interface GyroGuardNotice {
   at: number
 }
 
+export interface EditingTileTarget {
+  pageId: string
+  zoneId: string
+  tileId: string
+}
+
 interface MobileStoreState {
   phase: SessionPhase
   statusDetail: string
@@ -73,6 +94,10 @@ interface MobileStoreState {
   localFeel: LocalFeelPreferences
   pairingOpen: boolean
   feelSheetOpen: boolean
+
+  layoutEditing: boolean
+  editingTileTarget: EditingTileTarget | null
+  pageManagerOpen: boolean
 
   voiceLevel: number
   gyroGuard: GyroGuardNotice | null
@@ -96,12 +121,33 @@ interface MobileStoreState {
   setActivePage: (pageId: string) => void
   setPairingOpen: (open: boolean) => void
   setFeelSheetOpen: (open: boolean) => void
+  setLayoutEditing: (editing: boolean) => void
+  openTileEditor: (pageId: string, zoneId: string, tileId: string) => void
+  closeTileEditor: () => void
+  setPageManagerOpen: (open: boolean) => void
   updateLocalFeel: (patch: Partial<LocalFeelPreferences>) => void
   clearGyroGuard: () => void
   dismissConflict: () => void
   clearError: () => void
 
   submitDeckPatch: (patch: DeckLayoutPatch) => void
+  updateTile: (pageId: string, tileId: string, patch: Partial<MobileTile>) => void
+  cycleTileSpan: (pageId: string, tileId: string) => void
+  deleteTile: (pageId: string, tileId: string) => void
+  addTileToPage: (pageId: string, zoneId?: string, slotIndex?: number) => MobileTile | null
+  addZoneToPage: (pageId: string, kind: DeckZoneKind) => void
+  updateZone: (
+    pageId: string,
+    zoneId: string,
+    patch: Partial<Pick<MobileDeckZone, 'columns' | 'pointerMode' | 'tileIds'>>,
+  ) => void
+  moveZone: (pageId: string, zoneId: string, dir: -1 | 1) => void
+  deleteZone: (pageId: string, zoneId: string) => void
+  updatePageZonesOrder: (pageId: string, nextZones: MobileDeckZone[]) => void
+  addPageFromTemplate: (template: PageTemplateId, customName?: string) => MobileDeckPage
+  renamePage: (pageId: string, name: string) => void
+  deletePage: (pageId: string) => void
+
   updateSensitivity: (patch: { pointerSensitivity?: number; scrollSensitivity?: number }) => void
   sendText: (text: string, mode: TextCommitMode, submit: boolean) => boolean
   getClient: () => MobileSessionClient
@@ -230,6 +276,10 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     localFeel: initialFeel,
     pairingOpen: false,
     feelSheetOpen: false,
+
+    layoutEditing: false,
+    editingTileTarget: null,
+    pageManagerOpen: false,
 
     voiceLevel: 0,
     gyroGuard: null,
@@ -494,6 +544,62 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
     setFeelSheetOpen: (open) => set({ feelSheetOpen: open }),
 
+    setLayoutEditing: (editing) => {
+      if (editing) {
+        setNativeGyroClutch(false)
+        setNativeGyroConfig('off', get().localFeel.gyroSensitivity)
+        const s = get()
+        const nextMode: WorkspaceMode =
+          s.workspaceMode === 'pointer' ? 'deck' : s.workspaceMode
+        // Ensure activePageId matches the visible page when entering edit mode
+        let targetPageId = s.deck.activePageId
+        if (nextMode === 'remote') {
+          const remote =
+            s.deck.pages.find((p) => p.layout === 'remote' || p.id === 'classic-remote') ??
+            s.deck.pages[0]
+          if (remote) targetPageId = remote.id
+        } else if (nextMode === 'deck') {
+          const gridPages = s.deck.pages.filter(
+            (p) => p.layout !== 'remote' && p.id !== 'classic-remote',
+          )
+          const selectable = gridPages.length > 0 ? gridPages : s.deck.pages
+          const active = selectable.find((p) => p.id === s.deck.activePageId) ?? selectable[0]
+          if (active) targetPageId = active.id
+        }
+        set({
+          layoutEditing: true,
+          workspaceMode: nextMode,
+          editingTileTarget: null,
+          pageManagerOpen: false,
+          gyroGuard: null,
+          ...(targetPageId && targetPageId !== s.deck.activePageId
+            ? { deck: { ...s.deck, activePageId: targetPageId } }
+            : {}),
+        })
+        if (targetPageId && targetPageId !== s.deck.activePageId) {
+          ensureClient().sendDeckUpdate(s.deckRevision, { activePageId: targetPageId })
+        }
+      } else {
+        set({
+          layoutEditing: false,
+          editingTileTarget: null,
+          pageManagerOpen: false,
+        })
+      }
+    },
+
+    openTileEditor: (pageId, zoneId, tileId) => {
+      set({ editingTileTarget: { pageId, zoneId, tileId } })
+    },
+
+    closeTileEditor: () => {
+      set({ editingTileTarget: null })
+    },
+
+    setPageManagerOpen: (open) => {
+      set({ pageManagerOpen: open })
+    },
+
     updateLocalFeel: (patch) => {
       const merged: LocalFeelPreferences = {
         ...get().localFeel,
@@ -528,8 +634,275 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     clearError: () => set({ errorToast: null }),
 
     submitDeckPatch: (patch) => {
-      const { deckRevision } = get()
+      const { deck, deckRevision } = get()
+      const nextPages = patch.pages ? structuredClone(patch.pages) : deck.pages
+      const requestedActive = patch.activePageId ?? deck.activePageId
+      const validActive = nextPages.some((p) => p.id === requestedActive)
+        ? requestedActive
+        : (nextPages[0]?.id ?? deck.activePageId)
+      const nextDeck: DeckSnapshot = {
+        ...deck,
+        activePageId: validActive,
+        ...(patch.trackpadSplit !== undefined ? { trackpadSplit: patch.trackpadSplit } : {}),
+        ...(patch.pointerSensitivity !== undefined
+          ? { pointerSensitivity: patch.pointerSensitivity }
+          : {}),
+        ...(patch.scrollSensitivity !== undefined
+          ? { scrollSensitivity: patch.scrollSensitivity }
+          : {}),
+        pages: nextPages,
+      }
+      set({ deck: nextDeck })
       ensureClient().sendDeckUpdate(deckRevision, patch)
+    },
+
+    updateTile: (pageId, tileId, patch) => {
+      const { deck } = get()
+      const nextPages = deck.pages.map((p) => {
+        if (p.id !== pageId) return p
+        return {
+          ...p,
+          tiles: p.tiles.map((t) => (t.id === tileId ? { ...t, ...patch } : t)),
+        }
+      })
+      get().submitDeckPatch({ pages: nextPages })
+    },
+
+    cycleTileSpan: (pageId, tileId) => {
+      const { deck } = get()
+      const page = deck.pages.find((p) => p.id === pageId)
+      const tile = page?.tiles.find((t) => t.id === tileId)
+      if (!page || !tile) return
+      const nextSpan = cycleBentoSpan(tile.colSpan, tile.rowSpan)
+      const zones = normalizePageZones(page)
+      const nextPages = deck.pages.map((p) =>
+        p.id === pageId
+          ? {
+              ...p,
+              zones,
+              tiles: p.tiles.map((t) => (t.id === tileId ? { ...t, ...nextSpan } : t)),
+            }
+          : p,
+      )
+      get().submitDeckPatch({ pages: nextPages })
+    },
+
+    deleteTile: (pageId, tileId) => {
+      const { deck, editingTileTarget } = get()
+      const page = deck.pages.find((p) => p.id === pageId)
+      if (!page) return
+      const zones = normalizePageZones(page).map((z) => {
+        if (z.kind === 'dpad-3x3') {
+          return {
+            ...z,
+            tileIds: normalizeDpadSlotIds(z.tileIds).map((id) => (id === tileId ? '' : id)),
+          }
+        }
+        return {
+          ...z,
+          tileIds: z.tileIds.filter((id) => id !== tileId),
+        }
+      })
+      const nextPages = deck.pages.map((p) =>
+        p.id === pageId
+          ? {
+              ...p,
+              tiles: p.tiles.filter((t) => t.id !== tileId),
+              zones,
+            }
+          : p,
+      )
+      if (editingTileTarget?.tileId === tileId) {
+        set({ editingTileTarget: null })
+      }
+      get().submitDeckPatch({ pages: nextPages })
+    },
+
+    addTileToPage: (pageId, zoneId, slotIndex) => {
+      const { deck } = get()
+      const page = deck.pages.find((p) => p.id === pageId)
+      if (!page) return null
+      if (page.tiles.length >= MAX_TILES_PER_PAGE) {
+        set({ errorToast: `单页最多支持 ${MAX_TILES_PER_PAGE} 个按键` })
+        return null
+      }
+      const newTile = createNewCustomTile(page.tiles.length + 1)
+      const zones = normalizePageZones(page)
+
+      let placed = false
+      const nextZones = zones.map((z) => {
+        if (zoneId && z.id === zoneId) {
+          if (z.kind === 'dpad-3x3' && slotIndex !== undefined && slotIndex >= 0 && slotIndex < 9) {
+            const slots = normalizeDpadSlotIds(z.tileIds)
+            slots[slotIndex] = newTile.id
+            placed = true
+            return { ...z, tileIds: slots }
+          }
+          if (z.kind === 'bento-grid') {
+            placed = true
+            return { ...z, tileIds: [...z.tileIds, newTile.id] }
+          }
+        }
+        return z
+      })
+
+      if (!placed) {
+        let lastBentoIdx = -1
+        for (let i = nextZones.length - 1; i >= 0; i -= 1) {
+          if (nextZones[i].kind === 'bento-grid') {
+            lastBentoIdx = i
+            break
+          }
+        }
+        if (lastBentoIdx >= 0) {
+          nextZones[lastBentoIdx] = {
+            ...nextZones[lastBentoIdx],
+            tileIds: [...nextZones[lastBentoIdx].tileIds, newTile.id],
+          }
+        } else if (nextZones.length < MAX_ZONES_PER_PAGE) {
+          nextZones.push({
+            id: `${page.id}-bento-${nextZones.length + 1}`,
+            kind: 'bento-grid',
+            columns: page.columns,
+            tileIds: [newTile.id],
+          })
+        } else {
+          set({ errorToast: '当前页面无网格区块可放入新按键' })
+          return null
+        }
+      }
+
+      const nextPages = deck.pages.map((p) =>
+        p.id === pageId
+          ? {
+              ...p,
+              tiles: [...p.tiles, newTile],
+              zones: nextZones,
+            }
+          : p,
+      )
+      get().submitDeckPatch({ pages: nextPages })
+      return newTile
+    },
+
+    addZoneToPage: (pageId, kind) => {
+      const { deck } = get()
+      const page = deck.pages.find((p) => p.id === pageId)
+      if (!page) return
+      const zones = normalizePageZones(page)
+      if (zones.length >= MAX_ZONES_PER_PAGE) {
+        set({ errorToast: `单页最多支持 ${MAX_ZONES_PER_PAGE} 个区块` })
+        return
+      }
+      const { zone, addedTiles } = createNewZone(page, kind)
+      const nextZones = kind === 'pointer-pad' ? [zone, ...zones] : [...zones, zone]
+      const nextPages = deck.pages.map((p) =>
+        p.id === pageId
+          ? {
+              ...p,
+              tiles: [...p.tiles, ...addedTiles],
+              zones: nextZones,
+            }
+          : p,
+      )
+      get().submitDeckPatch({ pages: nextPages })
+    },
+
+    updateZone: (pageId, zoneId, patch) => {
+      const { deck } = get()
+      const page = deck.pages.find((p) => p.id === pageId)
+      if (!page) return
+      const zones = normalizePageZones(page)
+      const nextZones = zones.map((z) => (z.id === zoneId ? { ...z, ...patch } : z))
+      const bentoCount = nextZones.filter((z) => z.kind === 'bento-grid').length
+      const nextColumns =
+        patch.columns && bentoCount === 1 ? patch.columns : page.columns
+      const nextPages = deck.pages.map((p) =>
+        p.id === pageId ? { ...p, columns: nextColumns, zones: nextZones } : p,
+      )
+      get().submitDeckPatch({ pages: nextPages })
+    },
+
+    moveZone: (pageId, zoneId, dir) => {
+      const { deck } = get()
+      const page = deck.pages.find((p) => p.id === pageId)
+      if (!page) return
+      const zones = normalizePageZones(page)
+      const idx = zones.findIndex((z) => z.id === zoneId)
+      const targetIdx = idx + dir
+      if (idx < 0 || targetIdx < 0 || targetIdx >= zones.length) return
+      const nextZones = [...zones]
+      const [moved] = nextZones.splice(idx, 1)
+      nextZones.splice(targetIdx, 0, moved)
+      const nextPages = deck.pages.map((p) => (p.id === pageId ? { ...p, zones: nextZones } : p))
+      get().submitDeckPatch({ pages: nextPages })
+    },
+
+    deleteZone: (pageId, zoneId) => {
+      const { deck, editingTileTarget } = get()
+      const page = deck.pages.find((p) => p.id === pageId)
+      if (!page) return
+      const zones = normalizePageZones(page)
+      if (zones.length <= 1) {
+        set({ errorToast: '每页至少保留一个区块' })
+        return
+      }
+      const nextZones = zones.filter((z) => z.id !== zoneId)
+      const retainedIds = new Set(nextZones.flatMap((z) => z.tileIds.filter(Boolean)))
+      const removedZone = zones.find((z) => z.id === zoneId)
+      const removedIds = new Set(removedZone?.tileIds.filter(Boolean) ?? [])
+      const nextTiles = page.tiles.filter(
+        (t) => !removedIds.has(t.id) || retainedIds.has(t.id),
+      )
+      if (editingTileTarget && editingTileTarget.zoneId === zoneId) {
+        set({ editingTileTarget: null })
+      }
+      const nextPages = deck.pages.map((p) =>
+        p.id === pageId ? { ...p, tiles: nextTiles, zones: nextZones } : p,
+      )
+      get().submitDeckPatch({ pages: nextPages })
+    },
+
+    updatePageZonesOrder: (pageId, nextZones) => {
+      const { deck } = get()
+      const nextPages = deck.pages.map((p) =>
+        p.id === pageId ? { ...p, zones: nextZones } : p,
+      )
+      get().submitDeckPatch({ pages: nextPages })
+    },
+
+    addPageFromTemplate: (template, customName) => {
+      const { deck } = get()
+      const newPage = createPageFromTemplate(template, deck.pages.length + 1, customName)
+      const nextPages = [...deck.pages, newPage]
+      const nextWorkspace: WorkspaceMode =
+        newPage.layout === 'remote' && deck.pages.every((p) => p.layout !== 'remote' && p.id !== 'classic-remote')
+          ? 'remote'
+          : 'deck'
+      set({ workspaceMode: nextWorkspace, pageManagerOpen: false })
+      get().submitDeckPatch({ pages: nextPages, activePageId: newPage.id })
+      return newPage
+    },
+
+    renamePage: (pageId, name) => {
+      const cleaned = name.trim().slice(0, 24)
+      if (!cleaned) return
+      const { deck } = get()
+      const nextPages = deck.pages.map((p) => (p.id === pageId ? { ...p, name: cleaned } : p))
+      get().submitDeckPatch({ pages: nextPages })
+    },
+
+    deletePage: (pageId) => {
+      const { deck } = get()
+      if (deck.pages.length <= 1) {
+        set({ errorToast: '至少保留一个控制页面' })
+        return
+      }
+      const nextPages = deck.pages.filter((p) => p.id !== pageId)
+      const nextActive =
+        deck.activePageId === pageId ? nextPages[0].id : deck.activePageId
+      set({ editingTileTarget: null })
+      get().submitDeckPatch({ pages: nextPages, activePageId: nextActive })
     },
 
     updateSensitivity: (patch) => {

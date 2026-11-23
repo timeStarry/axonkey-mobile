@@ -308,4 +308,70 @@ describe('MobileSessionClient', () => {
       reason: 'user_cancelled',
     })
   })
+
+  it('coalesces rapid back-to-back deck.update patches so sequential span/style edits never self-conflict', () => {
+    const onDeckUpdate = vi.fn()
+    const transport = new FakeTransport(false)
+    const client = new MobileSessionClient({ onDeckUpdate }, 'TestPhone', () => 1000)
+
+    client.connectToHost(
+      {
+        hostId: 'h1',
+        hostName: 'PC',
+        addrs: ['127.0.0.1:9999'],
+        caCertDerB64: 'CA',
+        peerId: 'p1',
+        peerToken: 'tok',
+        lastConnectedAt: 0,
+      },
+      () => transport,
+    )
+    transport.receive({
+      type: 'server.ready',
+      sessionId: 's1',
+      inputEpoch: 1,
+      inputGeneration: 1,
+      leaseId: 1,
+      leaseTtlMs: 750,
+      tickIntervalMs: 250,
+      hostId: 'h1',
+      hostName: 'PC',
+      capabilities: {
+        relativePointer: true,
+        textCommit: true,
+        audioPcm16: true,
+        platform: 'windows',
+      },
+      deckSnapshot: DEFAULT_DEMO_DECK,
+      deckRevision: 5,
+      context: { appId: null, appName: null, profileName: 'Default' },
+      contextRevision: 1,
+    })
+
+    const req1 = client.sendDeckUpdate(5, { pointerSensitivity: 1.8 })
+    // Second edit arrives while req1 is still in flight
+    const req2 = client.sendDeckUpdate(5, { scrollSensitivity: 2.2 })
+    expect(req1).toBeTruthy()
+    expect(req2).toBe(req1)
+
+    const deckMsgsBeforeAck = transport.sent.filter((m) => m.type === 'deck.update')
+    expect(deckMsgsBeforeAck).toHaveLength(1)
+
+    // Ack req1 with revision 6 -> client automatically flushes queued patch against baseRevision 6!
+    transport.receive({
+      type: 'deck.update.result',
+      requestId: req1!,
+      ok: true,
+      deckRevision: 6,
+      deckSnapshot: { ...DEFAULT_DEMO_DECK, pointerSensitivity: 1.8 },
+    })
+
+    const deckMsgsAfterAck = transport.sent.filter((m) => m.type === 'deck.update')
+    expect(deckMsgsAfterAck).toHaveLength(2)
+    expect(deckMsgsAfterAck[1]).toMatchObject({
+      type: 'deck.update',
+      baseRevision: 6,
+      layoutPatch: { scrollSensitivity: 2.2 },
+    })
+  })
 })

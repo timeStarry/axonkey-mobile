@@ -220,9 +220,31 @@ export class DemoLoopbackTransport implements TransportAdapter {
           error: '版本冲突',
         })
       } else {
+        const prevSummaries = new Map<string, string>()
+        for (const p of this.deck.pages) {
+          for (const t of p.tiles) {
+            if (t.actionSummary) prevSummaries.set(t.id, t.actionSummary)
+          }
+        }
+        const nextPages = msg.layoutPatch.pages
+          ? structuredClone(msg.layoutPatch.pages).map((page) => ({
+              ...page,
+              tiles: page.tiles.map((tile) => ({
+                ...tile,
+                colSpan: (tile.colSpan >= 2 ? 2 : 1) as 1 | 2,
+                rowSpan: (tile.rowSpan && tile.rowSpan >= 2 ? 2 : 1) as 1 | 2,
+                actionSummary: tile.actionSummary ?? prevSummaries.get(tile.id),
+              })),
+            }))
+          : this.deck.pages
+        const requestedActive = msg.layoutPatch.activePageId ?? this.deck.activePageId
+        const validActivePageId = nextPages.some((p) => p.id === requestedActive)
+          ? requestedActive
+          : (nextPages[0]?.id ?? this.deck.activePageId)
+
         this.deck = {
           ...this.deck,
-          ...(msg.layoutPatch.activePageId ? { activePageId: msg.layoutPatch.activePageId } : {}),
+          activePageId: validActivePageId,
           ...(msg.layoutPatch.trackpadSplit !== undefined
             ? { trackpadSplit: msg.layoutPatch.trackpadSplit }
             : {}),
@@ -232,7 +254,7 @@ export class DemoLoopbackTransport implements TransportAdapter {
           ...(msg.layoutPatch.scrollSensitivity !== undefined
             ? { scrollSensitivity: msg.layoutPatch.scrollSensitivity }
             : {}),
-          ...(msg.layoutPatch.pages ? { pages: structuredClone(msg.layoutPatch.pages) } : {}),
+          pages: nextPages,
         }
         this.deckRev += 1
         this.emit({
@@ -275,7 +297,8 @@ export class MobileSessionClient {
   private capabilities: HostCapabilities | null = null
 
   private pendingTextRequests = new Set<string>()
-  private pendingDeckRequests = new Map<string, number>()
+  private inFlightDeckRequestId: string | null = null
+  private queuedDeckPatch: DeckLayoutPatch | null = null
 
   private activeVoiceStreamId: number | null = null
   private activeVoiceUsesNative = false
@@ -548,6 +571,13 @@ export class MobileSessionClient {
 
   sendDeckUpdate(baseRevision: number, layoutPatch: DeckLayoutPatch): string | null {
     if (!this.sessionId || this.phase !== 'active') return null
+    if (this.inFlightDeckRequestId !== null) {
+      this.queuedDeckPatch = {
+        ...this.queuedDeckPatch,
+        ...layoutPatch,
+      }
+      return this.inFlightDeckRequestId
+    }
     const requestId = this.nextRequestId('deck')
     const ok = this.sendRaw({
       type: 'deck.update',
@@ -557,7 +587,7 @@ export class MobileSessionClient {
       layoutPatch,
     })
     if (!ok) return null
-    this.pendingDeckRequests.set(requestId, baseRevision)
+    this.inFlightDeckRequestId = requestId
     return requestId
   }
 
@@ -846,16 +876,26 @@ export class MobileSessionClient {
         break
       }
       case 'deck.update.result': {
-        this.pendingDeckRequests.delete(msg.requestId)
+        if (this.inFlightDeckRequestId === msg.requestId) {
+          this.inFlightDeckRequestId = null
+        }
         if (msg.ok && msg.deckSnapshot) {
-          this.listener.onDeckUpdate?.(msg.deckSnapshot, msg.deckRevision)
+          if (this.queuedDeckPatch && this.sessionId && this.phase === 'active') {
+            const nextPatch = this.queuedDeckPatch
+            this.queuedDeckPatch = null
+            this.sendDeckUpdate(msg.deckRevision, nextPatch)
+          } else {
+            this.listener.onDeckUpdate?.(msg.deckSnapshot, msg.deckRevision)
+          }
         } else if (msg.conflict && msg.deckSnapshot) {
+          this.queuedDeckPatch = null
           this.listener.onDeckConflict?.(
             msg.deckSnapshot,
             msg.deckRevision,
             msg.error ?? '配置已被其他端更新',
           )
         } else {
+          this.queuedDeckPatch = null
           this.listener.onError?.(msg.error ?? '保存布局失败')
         }
         break
@@ -918,6 +958,8 @@ export class MobileSessionClient {
   }
 
   private markPendingTextsUnknown(): void {
+    this.inFlightDeckRequestId = null
+    this.queuedDeckPatch = null
     for (const reqId of this.pendingTextRequests) {
       this.listener.onTextStatus?.(reqId, 'unknown', '连接中断，发送结果未知（未自动重发）')
     }

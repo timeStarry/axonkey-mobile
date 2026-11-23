@@ -52,6 +52,8 @@ export interface ForegroundContext {
 }
 
 export type PageLayout = 'remote' | 'grid'
+export type DeckZoneKind = 'bento-grid' | 'dpad-3x3' | 'pointer-pad'
+export type EmbeddedPointerMode = 'trackpad' | 'relative'
 
 export interface MobileTile {
   id: string
@@ -61,9 +63,26 @@ export interface MobileTile {
   icon: string
   accent: TileAccent
   colSpan: 1 | 2
+  rowSpan?: 1 | 2
   mode: TileMode
-  hasDoubleClick: boolean
-  hasLongPress: boolean
+  hasDoubleClick?: boolean
+  hasLongPress?: boolean
+}
+
+export interface MobileDeckZone {
+  id: string
+  kind: DeckZoneKind
+  /** For 'bento-grid': 2, 3, or 4 columns (default page.columns || 3) */
+  columns?: 2 | 3 | 4
+  /** For 'pointer-pad': embedded pointer sub-mode ('trackpad' | 'relative') */
+  pointerMode?: EmbeddedPointerMode
+  /**
+   * Ordered tile IDs rendered inside this zone (for 'bento-grid' and 'dpad-3x3').
+   * For 'dpad-3x3', expects up to 9 slot IDs in 3x3 row-major order:
+   * [topLeft, up, topRight, left, ok, right, bottomLeft, down, bottomRight]
+   * (empty string "" allowed for blank corner/slot).
+   */
+  tileIds: string[]
 }
 
 export interface MobileDeckPage {
@@ -72,6 +91,7 @@ export interface MobileDeckPage {
   layout?: PageLayout
   columns: 2 | 3 | 4
   tiles: MobileTile[]
+  zones?: MobileDeckZone[]
 }
 
 export interface DeckSnapshot {
