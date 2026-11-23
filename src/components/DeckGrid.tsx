@@ -85,7 +85,7 @@ export function DeckGrid({ page, compact = false }: DeckGridProps) {
             type="button"
             className={clsx(
               'tile-surface relative flex flex-col justify-between rounded-2xl border text-left select-none touch-none',
-              compact ? 'min-h-[78px] p-3' : 'min-h-[96px] p-3.5',
+              compact ? 'min-h-[84px] p-3' : 'min-h-[108px] p-3.5',
               tile.colSpan === 2 && 'col-span-2',
               style.card,
               pressed && clsx('tile-pressed', style.pressedGlow),

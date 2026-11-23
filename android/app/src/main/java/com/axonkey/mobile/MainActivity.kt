@@ -308,6 +308,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun getDefaultDeviceName(): String {
+            val manufacturer = (Build.MANUFACTURER ?: "").trim()
+            val model = (Build.MODEL ?: "").trim()
+            val combined = when {
+                model.isEmpty() -> "Android 遥控器"
+                manufacturer.isEmpty() || model.startsWith(manufacturer, ignoreCase = true) -> model
+                else -> "${manufacturer.replaceFirstChar { it.uppercase() }} $model"
+            }
+            return combined.take(48)
+        }
+
+        @JavascriptInterface
         fun setKeepScreenOn(enabled: Boolean) {
             runOnUiThread {
                 if (enabled) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

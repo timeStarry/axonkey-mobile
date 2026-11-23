@@ -159,24 +159,24 @@ export function ClassicRemoteView({ page }: ClassicRemoteViewProps) {
   return (
     <div className="w-full h-full flex flex-col justify-between gap-2.5 select-none">
       {/* Row 1: 3 Anodized System Utility Keycaps */}
-      <div className="grid grid-cols-3 gap-2 shrink-0">
+      <div className="grid grid-cols-3 gap-2.5 shrink-0">
         {escTile && (
           <button
             type="button"
             {...bindHandlers(escTile)}
             className={clsx(
-              'tile-surface relative h-[54px] px-2.5 rounded-2xl border border-rose-400/25 bg-[#221319] flex items-center gap-2 text-left touch-none',
+              'tile-surface relative h-[60px] px-2.5 rounded-2xl border border-rose-400/25 bg-[#221319] flex items-center gap-2 text-left touch-none',
               pressedIds[escTile.id] &&
                 'tile-pressed border-rose-400/60 shadow-[0_0_16px_rgba(244,63,94,0.3)]',
               fbRing(escTile.id),
             )}
           >
-            <span className="w-7 h-7 rounded-xl bg-rose-500/20 text-rose-300 inline-flex items-center justify-center shrink-0">
-              <Power className="w-3.5 h-3.5" />
+            <span className="w-8 h-8 rounded-xl bg-rose-500/20 text-rose-300 inline-flex items-center justify-center shrink-0">
+              <Power className="w-4 h-4" />
             </span>
             <div className="min-w-0 flex-1 leading-tight">
-              <div className="text-[12px] font-semibold text-zinc-100 truncate">{escTile.label}</div>
-              <div className="text-[10px] text-rose-300/85 font-mono truncate mt-0.5">
+              <div className="text-[12.5px] font-semibold text-zinc-100 truncate">{escTile.label}</div>
+              <div className="text-[10.5px] text-rose-300/85 font-mono truncate mt-0.5">
                 {escTile.actionSummary ?? 'Esc'}
               </div>
             </div>
@@ -188,18 +188,18 @@ export function ClassicRemoteView({ page }: ClassicRemoteViewProps) {
             type="button"
             {...bindHandlers(menuTile)}
             className={clsx(
-              'tile-surface relative h-[54px] px-2.5 rounded-2xl border border-blue-400/20 bg-[#121a2a] flex items-center gap-2 text-left touch-none',
+              'tile-surface relative h-[60px] px-2.5 rounded-2xl border border-blue-400/20 bg-[#121a2a] flex items-center gap-2 text-left touch-none',
               pressedIds[menuTile.id] &&
                 'tile-pressed border-blue-400/60 shadow-[0_0_16px_rgba(59,130,246,0.28)]',
               fbRing(menuTile.id),
             )}
           >
-            <span className="w-7 h-7 rounded-xl bg-blue-500/20 text-blue-300 inline-flex items-center justify-center shrink-0">
-              <Menu className="w-3.5 h-3.5" />
+            <span className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-300 inline-flex items-center justify-center shrink-0">
+              <Menu className="w-4 h-4" />
             </span>
             <div className="min-w-0 flex-1 leading-tight">
-              <div className="text-[12px] font-semibold text-zinc-100 truncate">{menuTile.label}</div>
-              <div className="text-[10px] text-blue-300/85 font-mono truncate mt-0.5">
+              <div className="text-[12.5px] font-semibold text-zinc-100 truncate">{menuTile.label}</div>
+              <div className="text-[10.5px] text-blue-300/85 font-mono truncate mt-0.5">
                 {menuTile.actionSummary ?? 'Ctrl+K'}
               </div>
             </div>
@@ -211,18 +211,18 @@ export function ClassicRemoteView({ page }: ClassicRemoteViewProps) {
             type="button"
             {...bindHandlers(homeTile)}
             className={clsx(
-              'tile-surface relative h-[54px] px-2.5 rounded-2xl border border-white/[0.09] bg-[#151922] flex items-center gap-2 text-left touch-none',
+              'tile-surface relative h-[60px] px-2.5 rounded-2xl border border-white/[0.09] bg-[#151922] flex items-center gap-2 text-left touch-none',
               pressedIds[homeTile.id] &&
                 'tile-pressed border-zinc-300/40 shadow-[0_0_14px_rgba(255,255,255,0.1)]',
               fbRing(homeTile.id),
             )}
           >
-            <span className="w-7 h-7 rounded-xl bg-white/[0.07] text-zinc-200 inline-flex items-center justify-center shrink-0">
-              <Home className="w-3.5 h-3.5" />
+            <span className="w-8 h-8 rounded-xl bg-white/[0.07] text-zinc-200 inline-flex items-center justify-center shrink-0">
+              <Home className="w-4 h-4" />
             </span>
             <div className="min-w-0 flex-1 leading-tight">
-              <div className="text-[12px] font-semibold text-zinc-100 truncate">{homeTile.label}</div>
-              <div className="text-[10px] text-zinc-400 font-mono truncate mt-0.5">
+              <div className="text-[12.5px] font-semibold text-zinc-100 truncate">{homeTile.label}</div>
+              <div className="text-[10.5px] text-zinc-400 font-mono truncate mt-0.5">
                 {homeTile.actionSummary ?? 'Ctrl+L'}
               </div>
             </div>
@@ -230,9 +230,9 @@ export function ClassicRemoteView({ page }: ClassicRemoteViewProps) {
         )}
       </div>
 
-      {/* Center: Recessed Anodized 3x3 Navigation & Media Matrix */}
-      <div className="chassis-well flex-1 min-h-0 p-2 rounded-[26px] border border-white/[0.07] flex flex-col">
-        <div className="grid grid-cols-3 grid-rows-3 gap-2 flex-1 min-h-[228px]">
+      {/* Center: Balanced Square-Proportioned 3x3 Navigation & Media Matrix */}
+      <div className="chassis-well flex-[2.6] min-h-[228px] p-2.5 rounded-[26px] border border-white/[0.07] flex flex-col">
+        <div className="grid grid-cols-3 grid-rows-3 gap-2.5 flex-1">
           {/* Row 1: Back | UP | Vol+ */}
           {backTile && (
             <button
@@ -429,9 +429,9 @@ export function ClassicRemoteView({ page }: ClassicRemoteViewProps) {
         </div>
       </div>
 
-      {/* Bottom 2x2 Programmable Quick Action Keycaps */}
+      {/* Bottom 2x2 Large Blind-Touch Programmable Quick Action Keycaps */}
       {quickTiles.length > 0 && (
-        <div className="grid grid-cols-2 gap-2 shrink-0">
+        <div className="grid grid-cols-2 grid-rows-2 gap-2.5 flex-[1.35] min-h-[148px]">
           {quickTiles.map((tile) => {
             const Icon = getTileIcon(tile.icon)
             const style = ACCENT_STYLES[tile.accent] ?? ACCENT_STYLES.slate
@@ -442,7 +442,7 @@ export function ClassicRemoteView({ page }: ClassicRemoteViewProps) {
                 type="button"
                 {...bindHandlers(tile)}
                 className={clsx(
-                  'tile-surface relative h-[62px] px-3 rounded-2xl border flex items-center gap-2.5 text-left touch-none',
+                  'tile-surface relative min-h-[70px] px-3.5 py-2.5 rounded-[20px] border flex items-center gap-3 text-left touch-none',
                   style.card,
                   pressed && clsx('tile-pressed', style.pressedGlow),
                   fbRing(tile.id),
@@ -450,23 +450,23 @@ export function ClassicRemoteView({ page }: ClassicRemoteViewProps) {
               >
                 <span
                   className={clsx(
-                    'w-8 h-8 rounded-xl inline-flex items-center justify-center shrink-0',
+                    'w-9 h-9 rounded-xl inline-flex items-center justify-center shrink-0',
                     style.iconBg,
                     style.iconText,
                   )}
                 >
-                  <Icon className="w-4 h-4" />
+                  <Icon className="w-[18px] h-[18px]" />
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-1">
-                    <span className="text-[12.5px] font-semibold text-zinc-100 truncate">
+                    <span className="text-[13.5px] font-semibold text-zinc-100 truncate">
                       {tile.label}
                     </span>
                     <GesturePills tile={tile} compact />
                   </div>
                   <div
                     className={clsx(
-                      'text-[10px] font-mono truncate mt-0.5',
+                      'text-[11px] font-mono truncate mt-0.5',
                       style.silkscreen,
                     )}
                   >

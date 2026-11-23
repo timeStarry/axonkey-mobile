@@ -112,6 +112,11 @@ export type ClientMessage =
       leaseId: number
     }
   | {
+      type: 'client.rename'
+      sessionId: string
+      deviceName: string
+    }
+  | {
       type: 'tile.activate'
       sessionId: string
       inputEpoch: number

@@ -1,7 +1,8 @@
-import { Monitor, SlidersHorizontal, Sparkles, Vibrate, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Check, Monitor, SlidersHorizontal, Smartphone, Sparkles, Vibrate, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useMobileStore, type PointerSubMode } from '../state/useMobileStore'
-import { triggerHaptic } from '../transport/nativeBridge'
+import { getDefaultPhoneName, triggerHaptic } from '../transport/nativeBridge'
 
 export function LocalFeelSheet() {
   const open = useMobileStore((s) => s.feelSheetOpen)
@@ -11,7 +12,25 @@ export function LocalFeelSheet() {
   const updateLocalFeel = useMobileStore((s) => s.updateLocalFeel)
   const updateSensitivity = useMobileStore((s) => s.updateSensitivity)
 
+  const [nameDraft, setNameDraft] = useState(localFeel.deviceName)
+  const [nameSaved, setNameSaved] = useState(false)
+
+  useEffect(() => {
+    setNameDraft(localFeel.deviceName)
+  }, [localFeel.deviceName, open])
+
   if (!open) return null
+
+  const commitDeviceName = () => {
+    const cleaned = nameDraft.trim().slice(0, 48) || getDefaultPhoneName()
+    setNameDraft(cleaned)
+    if (cleaned !== localFeel.deviceName) {
+      updateLocalFeel({ deviceName: cleaned })
+      triggerHaptic('confirm')
+      setNameSaved(true)
+      setTimeout(() => setNameSaved(false), 1200)
+    }
+  }
 
   const gyroOptions: { id: PointerSubMode; label: string }[] = [
     { id: 'trackpad', label: '触控板优先' },
@@ -35,6 +54,47 @@ export function LocalFeelSheet() {
           >
             <X className="w-4 h-4" />
           </button>
+        </div>
+
+        {/* Device Remark Name */}
+        <div className="p-3.5 rounded-2xl bg-[#0d1018] border border-white/[0.07] space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="inline-flex items-center gap-1.5 font-medium text-zinc-200">
+              <Smartphone className="w-3.5 h-3.5 text-blue-400" />
+              <span>本机备注名称</span>
+            </span>
+            {nameSaved && (
+              <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-emerald-300">
+                <Check className="w-3 h-3" />
+                已更新
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={nameDraft}
+              maxLength={48}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={commitDeviceName}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.currentTarget.blur()
+                }
+              }}
+              placeholder={getDefaultPhoneName()}
+              className="flex-1 h-10 px-3 rounded-xl bg-[#131824] border border-white/[0.1] text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-blue-400/60"
+            />
+            {nameDraft.trim() !== localFeel.deviceName && (
+              <button
+                type="button"
+                onClick={commitDeviceName}
+                className="h-10 px-3.5 rounded-xl bg-blue-500 text-xs font-semibold text-white shrink-0"
+              >
+                保存
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Sliders Group */}

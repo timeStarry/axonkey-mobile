@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import { CheckCircle2, Laptop, QrCode, Radio, RefreshCw, Trash2, Wifi, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Check, CheckCircle2, Laptop, QrCode, Radio, RefreshCw, Smartphone, Trash2, Wifi, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useMobileStore } from '../state/useMobileStore'
 import {
+  getDefaultPhoneName,
   isNativeShell,
   parsePairingQr,
   requestNativeQrScan,
@@ -12,6 +13,8 @@ import {
 export function PairingSheet() {
   const open = useMobileStore((s) => s.pairingOpen)
   const setOpen = useMobileStore((s) => s.setPairingOpen)
+  const localFeel = useMobileStore((s) => s.localFeel)
+  const updateLocalFeel = useMobileStore((s) => s.updateLocalFeel)
   const savedHosts = useMobileStore((s) => s.savedHosts)
   const discoveredHosts = useMobileStore((s) => s.discoveredHosts)
   const discoveringLan = useMobileStore((s) => s.discoveringLan)
@@ -24,10 +27,27 @@ export function PairingSheet() {
   const pairFromOffer = useMobileStore((s) => s.pairFromOffer)
   const forgetHost = useMobileStore((s) => s.forgetHost)
 
+  const [nameDraft, setNameDraft] = useState(localFeel.deviceName)
+  const [nameSavedFlash, setNameSavedFlash] = useState(false)
   const [qrInput, setQrInput] = useState('')
   const [parseError, setParseError] = useState<string | null>(null)
 
+  useEffect(() => {
+    setNameDraft(localFeel.deviceName)
+  }, [localFeel.deviceName, open])
+
   if (!open) return null
+
+  const saveDeviceName = () => {
+    const cleaned = nameDraft.trim().slice(0, 48) || getDefaultPhoneName()
+    setNameDraft(cleaned)
+    if (cleaned !== localFeel.deviceName) {
+      updateLocalFeel({ deviceName: cleaned })
+      triggerHaptic('confirm')
+      setNameSavedFlash(true)
+      setTimeout(() => setNameSavedFlash(false), 1200)
+    }
+  }
 
   const discoveredIds = new Set(discoveredHosts.map((d) => d.hostId))
   const unpairedDiscovered = discoveredHosts.filter(
@@ -70,6 +90,47 @@ export function PairingSheet() {
           >
             <X className="w-4 h-4" />
           </button>
+        </div>
+
+        {/* Custom Phone Remark Name */}
+        <div className="p-3 rounded-2xl bg-[#0d1018] border border-white/[0.08] space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="inline-flex items-center gap-1.5 font-medium text-zinc-300">
+              <Smartphone className="w-3.5 h-3.5 text-blue-400" />
+              <span>本机备注名称（显示在电脑端）</span>
+            </span>
+            {nameSavedFlash && (
+              <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-emerald-300">
+                <Check className="w-3 h-3" />
+                已同步
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={nameDraft}
+              maxLength={48}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={saveDeviceName}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.currentTarget.blur()
+                }
+              }}
+              placeholder={getDefaultPhoneName()}
+              className="flex-1 h-10 px-3 rounded-xl bg-[#131824] border border-white/[0.1] text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-blue-400/60"
+            />
+            {nameDraft.trim() !== localFeel.deviceName && (
+              <button
+                type="button"
+                onClick={saveDeviceName}
+                className="h-10 px-3.5 rounded-xl bg-blue-500 text-xs font-semibold text-white shrink-0"
+              >
+                保存
+              </button>
+            )}
+          </div>
         </div>
 
         <button

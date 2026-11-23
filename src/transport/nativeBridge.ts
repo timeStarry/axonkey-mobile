@@ -20,6 +20,7 @@ export type HapticKind =
   | 'recenter'
 
 export interface LocalFeelPreferences {
+  deviceName: string
   gyroSensitivity: number
   preferredPointerSubMode: 'trackpad' | 'relative' | 'absolute'
   hapticsEnabled: boolean
@@ -29,6 +30,7 @@ export interface LocalFeelPreferences {
 
 export interface AxonkeyAndroidBridge {
   haptic(kind: string): void
+  getDefaultDeviceName?(): string
   setKeepScreenOn(enabled: boolean): void
   openQrScanner(): void
   connectWss(url: string, hostId: string, caCertDerB64: string, subprotocol: string): void
@@ -77,7 +79,23 @@ declare global {
 const FALLBACK_STORAGE_KEY = 'axonkey_mobile_saved_hosts_v1'
 const LOCAL_FEEL_STORAGE_KEY = 'axonkey_mobile_local_feel_v2'
 
+export function getDefaultPhoneName(): string {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.AxonkeyNative?.getDefaultDeviceName === 'function'
+  ) {
+    try {
+      const hw = window.AxonkeyNative.getDefaultDeviceName()?.trim()
+      if (hw) return hw.slice(0, 48)
+    } catch {
+      // Fallback below
+    }
+  }
+  return 'Axonkey 手机遥控'
+}
+
 export const DEFAULT_LOCAL_FEEL: LocalFeelPreferences = {
+  deviceName: getDefaultPhoneName(),
   gyroSensitivity: 1.2,
   preferredPointerSubMode: 'trackpad',
   hapticsEnabled: true,
@@ -92,12 +110,15 @@ export function setHapticsEnabled(enabled: boolean): void {
 }
 
 export function loadLocalFeelPreferences(): LocalFeelPreferences {
-  if (typeof window === 'undefined') return { ...DEFAULT_LOCAL_FEEL }
+  const defaultName = getDefaultPhoneName()
+  if (typeof window === 'undefined') return { ...DEFAULT_LOCAL_FEEL, deviceName: defaultName }
   try {
     const raw = window.localStorage.getItem(LOCAL_FEEL_STORAGE_KEY)
-    if (!raw) return { ...DEFAULT_LOCAL_FEEL }
+    if (!raw) return { ...DEFAULT_LOCAL_FEEL, deviceName: defaultName }
     const parsed = JSON.parse(raw) as Partial<LocalFeelPreferences>
+    const rawName = typeof parsed.deviceName === 'string' ? parsed.deviceName.trim() : ''
     const prefs: LocalFeelPreferences = {
+      deviceName: rawName.length > 0 ? rawName.slice(0, 48) : defaultName,
       gyroSensitivity:
         typeof parsed.gyroSensitivity === 'number' && Number.isFinite(parsed.gyroSensitivity)
           ? Math.min(5.0, Math.max(0.2, parsed.gyroSensitivity))

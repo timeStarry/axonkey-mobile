@@ -295,10 +295,27 @@ export class MobileSessionClient {
 
   constructor(
     private readonly listener: SessionListener,
-    private readonly deviceName = 'Axonkey Mobile',
+    private deviceName = 'Axonkey 手机遥控',
     now?: () => number,
   ) {
     this.now = now ?? (() => Date.now())
+  }
+
+  getDeviceName(): string {
+    return this.deviceName
+  }
+
+  setDeviceName(nextName: string): void {
+    const cleaned = nextName.trim().slice(0, 48) || 'Axonkey 手机遥控'
+    if (cleaned === this.deviceName) return
+    this.deviceName = cleaned
+    if (this.phase === 'active' && this.sessionId) {
+      this.sendRaw({
+        type: 'client.rename',
+        sessionId: this.sessionId,
+        deviceName: this.deviceName,
+      })
+    }
   }
 
   getPhase(): SessionPhase {

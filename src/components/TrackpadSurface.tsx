@@ -184,7 +184,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
   return (
     <div className={clsx('flex flex-col gap-2.5 w-full h-full min-h-[210px] select-none', className)}>
       {/* Top Sub-Mode Segmented Pill Bar */}
-      <div className="shrink-0 grid grid-cols-3 gap-1 p-1 rounded-2xl bg-[#11151e] border border-white/[0.07]">
+      <div className="shrink-0 grid grid-cols-3 gap-1.5 p-1.5 rounded-[20px] bg-[#11151e] border border-white/[0.08]">
         {subModes.map((item) => {
           const Icon = item.icon
           const active = subMode === item.id
@@ -194,13 +194,13 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
               type="button"
               onClick={() => handleSubModeSelect(item.id)}
               className={clsx(
-                'h-8 rounded-xl inline-flex items-center justify-center gap-1.5 text-xs font-semibold transition-all',
+                'h-10 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12.5px] font-semibold transition-all touch-none',
                 active
                   ? 'bg-[#202737] text-white border border-white/[0.12] shadow-sm'
                   : 'text-zinc-400 hover:text-zinc-200',
               )}
             >
-              <Icon className={clsx('w-3.5 h-3.5', active ? 'text-blue-400' : 'text-zinc-500')} />
+              <Icon className={clsx('w-4 h-4', active ? 'text-blue-400' : 'text-zinc-500')} />
               <span>{item.label}</span>
             </button>
           )
@@ -268,11 +268,11 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
             </button>
           </div>
 
-          <div className="grid grid-cols-12 gap-2 h-12 shrink-0">
+          <div className="grid grid-cols-12 gap-2.5 h-[62px] shrink-0">
             <button
               type="button"
               className={clsx(
-                'tile-surface col-span-5 rounded-2xl border border-white/[0.09] bg-[#161a24] text-xs font-semibold text-zinc-200 touch-none',
+                'tile-surface col-span-5 rounded-[20px] border border-white/[0.1] bg-[#161a24] text-[13.5px] font-semibold text-zinc-100 touch-none',
                 pressedButtons.left && 'tile-pressed border-blue-400/50',
               )}
               onPointerDown={(e) => {
@@ -287,7 +287,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
             <button
               type="button"
               className={clsx(
-                'tile-surface col-span-2 rounded-2xl border border-white/[0.08] bg-[#141821] text-[11px] font-medium text-zinc-400 touch-none',
+                'tile-surface col-span-2 rounded-[20px] border border-white/[0.09] bg-[#141821] text-xs font-medium text-zinc-400 touch-none',
                 pressedButtons.middle && 'tile-pressed border-blue-400/45',
               )}
               onPointerDown={(e) => {
@@ -302,7 +302,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
             <button
               type="button"
               className={clsx(
-                'tile-surface col-span-5 rounded-2xl border border-white/[0.09] bg-[#161a24] text-xs font-semibold text-zinc-200 touch-none',
+                'tile-surface col-span-5 rounded-[20px] border border-white/[0.1] bg-[#161a24] text-[13.5px] font-semibold text-zinc-100 touch-none',
                 pressedButtons.right && 'tile-pressed border-blue-400/50',
               )}
               onPointerDown={(e) => {
@@ -375,11 +375,11 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
           </button>
 
           {/* Left | Scroll-Drag Clutch | Right */}
-          <div className="grid grid-cols-12 gap-2 h-12 shrink-0">
+          <div className="grid grid-cols-12 gap-2.5 h-[62px] shrink-0">
             <button
               type="button"
               className={clsx(
-                'tile-surface col-span-4 rounded-2xl border border-white/[0.09] bg-[#161a24] text-xs font-semibold text-zinc-200 touch-none',
+                'tile-surface col-span-4 rounded-[20px] border border-white/[0.1] bg-[#161a24] text-[13.5px] font-semibold text-zinc-100 touch-none',
                 pressedButtons.left && 'tile-pressed border-blue-400/50',
               )}
               onPointerDown={(e) => {
@@ -397,7 +397,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
               tabIndex={0}
               aria-label="上下滑动滚轮"
               className={clsx(
-                'tile-surface col-span-4 rounded-2xl border border-white/[0.09] bg-[#141923] flex items-center justify-center text-[11.5px] font-medium text-zinc-300 touch-none',
+                'tile-surface col-span-4 rounded-[20px] border border-white/[0.1] bg-[#141923] flex items-center justify-center text-xs font-semibold text-zinc-300 touch-none',
                 pressedButtons.scroll && 'tile-pressed border-blue-400/50 text-blue-200',
               )}
               onPointerDown={(e) => {
@@ -434,7 +434,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
             <button
               type="button"
               className={clsx(
-                'tile-surface col-span-4 rounded-2xl border border-white/[0.09] bg-[#161a24] text-xs font-semibold text-zinc-200 touch-none',
+                'tile-surface col-span-4 rounded-[20px] border border-white/[0.1] bg-[#161a24] text-[13.5px] font-semibold text-zinc-100 touch-none',
                 pressedButtons.right && 'tile-pressed border-blue-400/50',
               )}
               onPointerDown={(e) => {
@@ -517,11 +517,11 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
             </button>
           </div>
 
-          <div className="grid grid-cols-12 gap-2 h-12 shrink-0">
+          <div className="grid grid-cols-12 gap-2.5 h-[62px] shrink-0">
             <button
               type="button"
               className={clsx(
-                'tile-surface col-span-5 rounded-2xl border border-white/[0.09] bg-[#161a24] text-xs font-semibold text-zinc-200 touch-none',
+                'tile-surface col-span-5 rounded-[20px] border border-white/[0.1] bg-[#161a24] text-[13.5px] font-semibold text-zinc-100 touch-none',
                 pressedButtons.left && 'tile-pressed border-blue-400/50',
               )}
               onPointerDown={(e) => {
@@ -536,7 +536,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
             <button
               type="button"
               className={clsx(
-                'tile-surface col-span-2 rounded-2xl border border-white/[0.08] bg-[#141821] text-[11px] font-medium text-zinc-400 touch-none',
+                'tile-surface col-span-2 rounded-[20px] border border-white/[0.09] bg-[#141821] text-xs font-medium text-zinc-400 touch-none',
                 pressedButtons.middle && 'tile-pressed border-blue-400/45',
               )}
               onPointerDown={(e) => {
@@ -551,7 +551,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
             <button
               type="button"
               className={clsx(
-                'tile-surface col-span-5 rounded-2xl border border-white/[0.09] bg-[#161a24] text-xs font-semibold text-zinc-200 touch-none',
+                'tile-surface col-span-5 rounded-[20px] border border-white/[0.1] bg-[#161a24] text-[13.5px] font-semibold text-zinc-100 touch-none',
                 pressedButtons.right && 'tile-pressed border-blue-400/50',
               )}
               onPointerDown={(e) => {

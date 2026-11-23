@@ -71,7 +71,7 @@ export function App() {
   return (
     <div className="h-full w-full flex flex-col bg-[#0a0c10] text-zinc-100 overflow-hidden">
       {/* Sleek Hardware Status Header */}
-      <header className="shrink-0 flex items-center justify-between gap-2 px-3 pb-2 safe-top border-b border-white/[0.06] bg-[#0d1017]/95 backdrop-blur-md">
+      <header className="shrink-0 flex items-center justify-between gap-2 px-3.5 pb-2.5 safe-top border-b border-white/[0.06] bg-[#0d1017]/95 backdrop-blur-md">
         {phase === 'active' ? (
           <button
             type="button"
@@ -79,7 +79,7 @@ export function App() {
               triggerHaptic('tap')
               setPairingOpen(true)
             }}
-            className="flex items-center gap-2 min-w-0 h-8 px-2.5 rounded-full bg-white/[0.04] border border-white/[0.08] active:scale-[0.98] transition-transform"
+            className="flex items-center gap-2 min-w-0 h-9 px-3 rounded-full bg-white/[0.045] border border-white/[0.09] active:scale-[0.98] transition-transform"
           >
             <span
               className={clsx(
@@ -89,16 +89,16 @@ export function App() {
                   : 'bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.65)]',
               )}
             />
-            <span className="text-xs font-semibold text-zinc-100 truncate max-w-[118px]">
+            <span className="text-[12.5px] font-semibold text-zinc-100 truncate max-w-[126px]">
               {isDemoMode ? '模拟体验' : hostName}
             </span>
             {isDemoMode ? (
-              <span className="px-1.5 py-0.5 rounded-full bg-blue-500/20 text-[10px] font-medium text-blue-300 shrink-0">
+              <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-[10.5px] font-medium text-blue-300 shrink-0">
                 扫码连电脑
               </span>
             ) : (
               (contextBadge || context.profileName) && (
-                <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/25 text-[10px] font-medium text-emerald-200 truncate max-w-[104px]">
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/25 text-[10.5px] font-medium text-emerald-200 truncate max-w-[110px]">
                   {contextBadge ?? context.profileName}
                 </span>
               )
@@ -116,15 +116,15 @@ export function App() {
                   setPairingOpen(true)
                 }
               }}
-              className="flex items-center gap-2 min-w-0 h-8 px-2.5 rounded-full bg-amber-500/12 border border-amber-400/35 text-amber-200 active:scale-[0.98] transition-transform"
+              className="flex items-center gap-2 min-w-0 h-9 px-3 rounded-full bg-amber-500/12 border border-amber-400/35 text-amber-200 active:scale-[0.98] transition-transform"
             >
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
-              <span className="text-xs font-semibold truncate max-w-[116px]">
+              <span className="text-[12.5px] font-semibold truncate max-w-[122px]">
                 {isConnecting ? '正在重连…' : savedHosts.length > 0 ? '未连接电脑' : '点击扫码配对'}
               </span>
               {savedHosts.length > 0 && (
-                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-400/20 text-[10px] font-semibold text-amber-100 shrink-0">
-                  <RefreshCw className={clsx('w-2.5 h-2.5', isConnecting && 'animate-spin')} />
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-400/20 text-[10.5px] font-semibold text-amber-100 shrink-0">
+                  <RefreshCw className={clsx('w-3 h-3', isConnecting && 'animate-spin')} />
                   重试
                 </span>
               )}
@@ -132,7 +132,7 @@ export function App() {
           </div>
         )}
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() => {
@@ -140,12 +140,12 @@ export function App() {
               setPairingOpen(true)
             }}
             aria-label="连接与配对"
-            className="tile-surface h-8 w-8 rounded-xl bg-[#151923] border border-white/[0.08] inline-flex items-center justify-center text-zinc-300"
+            className="tile-surface h-9 w-9 rounded-xl bg-[#151923] border border-white/[0.09] inline-flex items-center justify-center text-zinc-300"
           >
             {savedHosts.length > 0 ? (
-              <Wifi className="w-3.5 h-3.5" />
+              <Wifi className="w-4 h-4" />
             ) : (
-              <QrCode className="w-3.5 h-3.5" />
+              <QrCode className="w-4 h-4" />
             )}
           </button>
 
@@ -156,9 +156,9 @@ export function App() {
               setFeelSheetOpen(true)
             }}
             aria-label="本地手感设置"
-            className="tile-surface h-8 w-8 rounded-xl bg-[#151923] border border-white/[0.08] inline-flex items-center justify-center text-zinc-300"
+            className="tile-surface h-9 w-9 rounded-xl bg-[#151923] border border-white/[0.09] inline-flex items-center justify-center text-zinc-300"
           >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <SlidersHorizontal className="w-4 h-4" />
           </button>
         </div>
       </header>
@@ -233,9 +233,9 @@ export function App() {
       {/* Ergonomic Thumb-Zone Primary Mode Segmented Bar (Right Above Voice/Text Dock) */}
       <nav
         aria-label="主工作区切换"
-        className="shrink-0 px-3 pt-1.5 pb-1.5 bg-[#0c0f16] border-t border-white/[0.06]"
+        className="shrink-0 px-3 pt-2 pb-1 bg-[#0c0f16] border-t border-white/[0.07]"
       >
-        <div className="grid grid-cols-3 gap-1 p-1 rounded-2xl bg-[#121620] border border-white/[0.07]">
+        <div className="grid grid-cols-3 gap-1.5 p-1.5 rounded-[20px] bg-[#121620] border border-white/[0.08]">
           {navItems.map((item) => {
             const Icon = item.icon
             const active = workspaceMode === item.id
@@ -249,13 +249,13 @@ export function App() {
                   setWorkspaceMode(item.id)
                 }}
                 className={clsx(
-                  'h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-xs font-semibold transition-all',
+                  'h-12 rounded-2xl inline-flex items-center justify-center gap-2 text-[13px] font-semibold transition-all touch-none',
                   active
-                    ? 'bg-[#212838] text-white border border-white/[0.12] shadow-sm'
+                    ? 'tile-surface bg-[#22293a] text-white border border-blue-400/30 shadow-sm'
                     : 'text-zinc-400 active:text-zinc-200',
                 )}
               >
-                <Icon className={clsx('w-3.5 h-3.5', active ? 'text-blue-400' : 'text-zinc-500')} />
+                <Icon className={clsx('w-4 h-4', active ? 'text-blue-400' : 'text-zinc-500')} />
                 <span>{item.label}</span>
               </button>
             )

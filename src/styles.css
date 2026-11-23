@@ -95,5 +95,5 @@ input[type="range"].ak-slider::-webkit-slider-thumb {
 }
 
 .safe-bottom {
-  padding-bottom: max(env(safe-area-inset-bottom), 10px);
+  padding-bottom: max(env(safe-area-inset-bottom), 14px);
 }

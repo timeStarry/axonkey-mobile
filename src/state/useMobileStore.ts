@@ -128,8 +128,9 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
   const ensureClient = (): MobileSessionClient => {
     if (singletonClient) return singletonClient
-    singletonClient = new MobileSessionClient({
-      onPhaseChange: (phase, detail) => {
+    singletonClient = new MobileSessionClient(
+      {
+        onPhaseChange: (phase, detail) => {
         const keepOn = phase === 'active' && get().localFeel.keepScreenOn
         setKeepScreenOn(keepOn)
         if (phase !== 'active') {
@@ -202,7 +203,9 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       onError: (message) => {
         set({ errorToast: message })
       },
-    })
+    },
+    get().localFeel.deviceName,
+    )
     return singletonClient
   }
 
@@ -492,14 +495,21 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     setFeelSheetOpen: (open) => set({ feelSheetOpen: open }),
 
     updateLocalFeel: (patch) => {
-      const next: LocalFeelPreferences = {
+      const merged: LocalFeelPreferences = {
         ...get().localFeel,
         ...patch,
       }
-      saveLocalFeelPreferences(next)
-      setKeepScreenOn(get().phase === 'active' && next.keepScreenOn)
+      if (patch.deviceName !== undefined) {
+        const cleaned = patch.deviceName.trim().slice(0, 48)
+        if (cleaned) {
+          merged.deviceName = cleaned
+        }
+        ensureClient().setDeviceName(merged.deviceName)
+      }
+      saveLocalFeelPreferences(merged)
+      setKeepScreenOn(get().phase === 'active' && merged.keepScreenOn)
       set({
-        localFeel: next,
+        localFeel: merged,
         ...(patch.preferredPointerSubMode
           ? { pointerSubMode: patch.preferredPointerSubMode }
           : {}),
