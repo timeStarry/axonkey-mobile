@@ -22,6 +22,23 @@ export const CLASSIC_REMOTE_DPAD_IDS = [
   'remote.vol_down',
 ] as const
 
+export const GESTURE_PAD_SLOT_SPECS = [
+  { index: 0, key: 'up', badge: '↑', dirLabel: '↑ 上滑', label: '上滑', icon: 'arrow-up', accent: 'blue' },
+  { index: 1, key: 'down', badge: '↓', dirLabel: '↓ 下滑', label: '下滑', icon: 'arrow-down', accent: 'slate' },
+  { index: 2, key: 'left', badge: '←', dirLabel: '← 左滑', label: '左滑', icon: 'arrow-left', accent: 'slate' },
+  { index: 3, key: 'right', badge: '→', dirLabel: '→ 右滑', label: '右滑', icon: 'arrow-right', accent: 'slate' },
+  { index: 4, key: 'tap', badge: '单击', dirLabel: '单击', label: '轻点', icon: 'zap', accent: 'emerald' },
+  { index: 5, key: 'double', badge: '双击', dirLabel: '双击', label: '双击', icon: 'sparkles', accent: 'violet' },
+] as const satisfies readonly {
+  index: number
+  key: 'up' | 'down' | 'left' | 'right' | 'tap' | 'double'
+  badge: string
+  dirLabel: string
+  label: string
+  icon: string
+  accent: TileAccent
+}[]
+
 export interface PackedBentoItem {
   tile: MobileTile
   col: number
@@ -93,9 +110,24 @@ export function normalizePageZones(page: MobileDeckPage): MobileDeckZone[] {
         ? { columns: clampColumns(z.columns, pageCols) }
         : {}),
       ...(z.kind === 'pointer-pad'
-        ? { pointerMode: z.pointerMode === 'relative' ? 'relative' : 'trackpad' }
+        ? {
+            pointerMode: z.pointerMode === 'relative' ? 'relative' : 'trackpad',
+            ...(z.padHeight === 'compact' || z.padHeight === 'standard' || z.padHeight === 'tall'
+              ? { padHeight: z.padHeight }
+              : {}),
+            ...(typeof z.showButtons === 'boolean' ? { showButtons: z.showButtons } : {}),
+          }
         : {}),
-      tileIds: Array.isArray(z.tileIds) ? [...z.tileIds] : [],
+      ...(z.kind === 'gesture-pad'
+        ? {
+            ...(z.padHeight === 'compact' || z.padHeight === 'standard' || z.padHeight === 'tall'
+              ? { padHeight: z.padHeight }
+              : {}),
+            tileIds: normalizeGesturePadSlotIds(Array.isArray(z.tileIds) ? z.tileIds : []),
+          }
+        : {
+            tileIds: Array.isArray(z.tileIds) ? [...z.tileIds] : [],
+          }),
     }))
 
     const referenced = new Set<string>()
@@ -263,6 +295,15 @@ export function normalizeDpadSlotIds(tileIds: string[]): string[] {
   return slots
 }
 
+/** Normalizes 6 slots `[up, down, left, right, tap, double]` for a `gesture-pad` zone. */
+export function normalizeGesturePadSlotIds(tileIds: string[]): string[] {
+  const slots = tileIds.slice(0, 6)
+  while (slots.length < 6) {
+    slots.push('')
+  }
+  return slots
+}
+
 let uidCounter = 1
 export function makeCustomId(prefix: string): string {
   uidCounter += 1
@@ -302,9 +343,35 @@ export function createNewZone(
         id: zoneId,
         kind: 'pointer-pad',
         pointerMode: 'trackpad',
+        padHeight: 'standard',
+        showButtons: true,
         tileIds: [],
       },
       addedTiles: [],
+    }
+  }
+
+  if (kind === 'gesture-pad') {
+    const remainingBudget = Math.max(0, MAX_TILES_PER_PAGE - page.tiles.length)
+    const addedTiles: MobileTile[] = []
+    const tileIds = GESTURE_PAD_SLOT_SPECS.map((spec) => {
+      if (addedTiles.length >= remainingBudget) return ''
+      const t = createNewCustomTile(page.tiles.length + addedTiles.length + 1, {
+        label: spec.label,
+        icon: spec.icon,
+        accent: spec.accent,
+      })
+      addedTiles.push(t)
+      return t.id
+    })
+    return {
+      zone: {
+        id: zoneId,
+        kind: 'gesture-pad',
+        padHeight: 'standard',
+        tileIds,
+      },
+      addedTiles,
     }
   }
 

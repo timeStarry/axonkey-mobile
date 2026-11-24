@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  createNewZone,
   createPageFromTemplate,
   cycleBentoSpan,
+  normalizeGesturePadSlotIds,
   normalizePageZones,
   packBentoTiles,
   reorderTileIds,
@@ -185,5 +187,66 @@ describe('bentoLayout — Deterministic 2D Dense Packer & Zone Normalizer', () =
     const tall = createPageFromTemplate('media-tall', 3)
     expect(tall.tiles.some((t) => t.colSpan === 2 && t.rowSpan === 2)).toBe(true)
     expect(tall.tiles.some((t) => t.colSpan === 1 && t.rowSpan === 2)).toBe(true)
+  })
+
+  it('creates 6-slot gesture-pad zones in canonical [up, down, left, right, tap, double] order and normalizes without orphaning', () => {
+    const basePage: MobileDeckPage = {
+      id: 'g-page',
+      name: '手势页',
+      columns: 3,
+      tiles: [],
+      zones: [],
+    }
+    const { zone, addedTiles } = createNewZone(basePage, 'gesture-pad')
+    expect(zone.kind).toBe('gesture-pad')
+    expect(zone.tileIds).toHaveLength(6)
+    expect(addedTiles).toHaveLength(6)
+    expect(addedTiles.map((t) => t.label)).toEqual([
+      '上滑',
+      '下滑',
+      '左滑',
+      '右滑',
+      '轻点',
+      '双击',
+    ])
+    expect(zone.tileIds).toEqual(addedTiles.map((t) => t.id))
+
+    const pageWithGesture: MobileDeckPage = {
+      ...basePage,
+      tiles: addedTiles,
+      zones: [
+        {
+          ...zone,
+          padHeight: 'tall',
+          tileIds: zone.tileIds.slice(0, 4), // truncated input pads to 6 slots
+        },
+        {
+          id: 'embed-pad',
+          kind: 'pointer-pad',
+          pointerMode: 'trackpad',
+          padHeight: 'compact',
+          showButtons: false,
+          tileIds: [],
+        },
+      ],
+    }
+
+    const normalized = normalizePageZones(pageWithGesture)
+    expect(normalized[0].kind).toBe('gesture-pad')
+    expect(normalized[0].padHeight).toBe('tall')
+    expect(normalized[0].tileIds).toHaveLength(6)
+    expect(normalized[0].tileIds.slice(4)).toEqual(['', ''])
+    expect(normalized[1]).toMatchObject({
+      kind: 'pointer-pad',
+      padHeight: 'compact',
+      showButtons: false,
+    })
+    // The 2 unreferenced tiles from slicing 0..4 get rescued into a trailing bento-grid so nothing is lost
+    expect(normalized[2]).toMatchObject({
+      kind: 'bento-grid',
+      tileIds: [addedTiles[4].id, addedTiles[5].id],
+    })
+
+    expect(normalizeGesturePadSlotIds(['a', 'b'])).toEqual(['a', 'b', '', '', '', ''])
   })
 })

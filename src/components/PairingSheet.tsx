@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Smartphone,
   Trash2,
+  Wand2,
   Wifi,
   X,
 } from 'lucide-react'
@@ -38,6 +39,7 @@ export function PairingSheet() {
   const connectDemo = useMobileStore((s) => s.connectDemo)
   const pairFromOffer = useMobileStore((s) => s.pairFromOffer)
   const forgetHost = useMobileStore((s) => s.forgetHost)
+  const setPresetWizardOpen = useMobileStore((s) => s.setPresetWizardOpen)
 
   const isLight = effectiveTheme === 'light'
 
@@ -311,18 +313,35 @@ export function PairingSheet() {
           {parseError && <p className="text-xs text-rose-500">{parseError}</p>}
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            triggerHaptic('tap')
-            connectDemo()
-            setOpen(false)
-          }}
-          className="ak-pill ak-text-2 w-full h-10 rounded-xl border text-xs font-medium inline-flex items-center justify-center gap-1.5"
-        >
-          <Radio className={clsx('w-3.5 h-3.5', isLight ? 'text-emerald-600' : 'text-emerald-400')} />
-          <span>{isDemoMode ? '当前处于本地模拟体验模式' : '切换到本地模拟体验模式'}</span>
-        </button>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic('tap')
+              setOpen(false)
+              setPresetWizardOpen(true)
+            }}
+            className="ak-pill ak-text-1 h-10 px-3 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-1.5"
+          >
+            <Wand2 className={clsx('w-3.5 h-3.5', isLight ? 'text-blue-600' : 'text-blue-400')} />
+            <span>预设方案向导</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic('tap')
+              connectDemo()
+              setOpen(false)
+            }}
+            className="ak-pill ak-text-2 h-10 px-3 rounded-xl border text-xs font-medium inline-flex items-center justify-center gap-1.5"
+          >
+            <Radio
+              className={clsx('w-3.5 h-3.5', isLight ? 'text-emerald-600' : 'text-emerald-400')}
+            />
+            <span className="truncate">{isDemoMode ? '模拟体验中' : '本地模拟体验'}</span>
+          </button>
+        </div>
       </div>
     </div>
   )

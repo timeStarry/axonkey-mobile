@@ -3,14 +3,21 @@ package com.axonkey.mobile
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Color
+import android.hardware.display.DisplayManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.provider.Settings
 import android.util.Base64
+import android.view.KeyEvent
+import android.view.Surface
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
@@ -49,6 +56,27 @@ class MainActivity : AppCompatActivity() {
     private lateinit var gyroController: GyroController
     private lateinit var voiceController: VoiceCaptureController
     private lateinit var lanDiscoveryClient: LanDiscoveryClient
+    private lateinit var appUpdateInstaller: AppUpdateInstaller
+    private var displayManager: DisplayManager? = null
+
+    private val volumeLock = Any()
+    private var isActivityResumed: Boolean = false
+    private var volumeCaptureActive: Boolean = false
+    private var volumeCaptureMode: String = "off"
+    private var heldVolUp: Boolean = false
+    private var heldVolDown: Boolean = false
+
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = Unit
+
+        override fun onDisplayRemoved(displayId: Int) = Unit
+
+        override fun onDisplayChanged(displayId: Int) {
+            if (::gyroController.isInitialized) {
+                gyroController.setDisplayRotation(currentDisplayRotation())
+            }
+        }
+    }
 
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         val raw = result.contents
@@ -63,6 +91,15 @@ class MainActivity : AppCompatActivity() {
             if (!granted) {
                 performHaptic("error")
                 emitJs("window.__axonkeyNativeOnError && window.__axonkeyNativeOnError('需要麦克风权限才能发送语音');")
+            }
+        }
+
+    private val unknownSourcesLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) {
+                if (::appUpdateInstaller.isInitialized) {
+                    appUpdateInstaller.installPendingApk()
+                }
             }
         }
 
@@ -81,6 +118,11 @@ class MainActivity : AppCompatActivity() {
                 performHaptic("recenter")
             }
         )
+        gyroController.setDisplayRotation(currentDisplayRotation())
+
+        displayManager = (getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)?.also { dm ->
+            dm.registerDisplayListener(displayListener, null)
+        }
 
         voiceController = VoiceCaptureController(
             context = this,
@@ -103,6 +145,44 @@ class MainActivity : AppCompatActivity() {
             onHostsDiscovered = { jsonArrayString ->
                 val quoted = JSONObject.quote(jsonArrayString)
                 emitJs("window.__axonkeyNativeOnHostsDiscovered && window.__axonkeyNativeOnHostsDiscovered($quoted);")
+            }
+        )
+
+        appUpdateInstaller = AppUpdateInstaller(
+            context = this,
+            onUpdateRelease = { jsonString ->
+                val quoted = JSONObject.quote(jsonString)
+                emitJs("window.__axonkeyNativeOnUpdateRelease && window.__axonkeyNativeOnUpdateRelease($quoted);")
+            },
+            onUpdateProgress = { jsonString ->
+                val quoted = JSONObject.quote(jsonString)
+                emitJs("window.__axonkeyNativeOnUpdateProgress && window.__axonkeyNativeOnUpdateProgress($quoted);")
+            },
+            onRequestInstallPermission = {
+                runOnUiThread {
+                    if (!isDestroyed) {
+                        try {
+                            val settingsIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                Intent(
+                                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    Uri.parse("package:$packageName")
+                                )
+                            } else {
+                                Intent(Settings.ACTION_SECURITY_SETTINGS)
+                            }
+                            unknownSourcesLauncher.launch(settingsIntent)
+                        } catch (_: Exception) {
+                            try {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    unknownSourcesLauncher.launch(
+                                        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                                    )
+                                }
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                }
             }
         )
 
@@ -131,8 +211,101 @@ class MainActivity : AppCompatActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (::gyroController.isInitialized) {
+            gyroController.setDisplayRotation(currentDisplayRotation())
+        }
         val isDark = resolveSystemNightMode(newConfig)
         emitJs("window.__axonkeyNativeOnSystemDarkChanged && window.__axonkeyNativeOnSystemDarkChanged($isDark);")
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val keyCode = event.keyCode
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            val isUpKey = keyCode == KeyEvent.KEYCODE_VOLUME_UP
+            val keyName = if (isUpKey) "up" else "down"
+
+            var intercepted = false
+            var emitAction: String? = null
+            var triggerClickPulse = false
+
+            synchronized(volumeLock) {
+                if (isActivityResumed && volumeCaptureActive && volumeCaptureMode != "off") {
+                    intercepted = true
+                    when (volumeCaptureMode) {
+                        "lr", "rl" -> {
+                            when (event.action) {
+                                KeyEvent.ACTION_DOWN -> {
+                                    val alreadyHeld = if (isUpKey) heldVolUp else heldVolDown
+                                    if (event.repeatCount == 0 && !alreadyHeld) {
+                                        if (isUpKey) heldVolUp = true else heldVolDown = true
+                                        triggerClickPulse = true
+                                        emitAction = "down"
+                                    }
+                                }
+                                KeyEvent.ACTION_UP -> {
+                                    val wasHeld = if (isUpKey) heldVolUp else heldVolDown
+                                    if (isUpKey) heldVolUp = false else heldVolDown = false
+                                    if (wasHeld) {
+                                        emitAction = "up"
+                                    }
+                                }
+                            }
+                        }
+                        "scroll" -> {
+                            when (event.action) {
+                                KeyEvent.ACTION_DOWN -> {
+                                    if (event.repeatCount == 0) {
+                                        if (isUpKey) heldVolUp = true else heldVolDown = true
+                                        emitAction = "down"
+                                    } else {
+                                        emitAction = "repeat"
+                                    }
+                                }
+                                KeyEvent.ACTION_UP -> {
+                                    val wasHeld = if (isUpKey) heldVolUp else heldVolDown
+                                    if (isUpKey) heldVolUp = false else heldVolDown = false
+                                    if (wasHeld) {
+                                        emitAction = "up"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (intercepted) {
+                if (triggerClickPulse && ::gyroController.isInitialized) {
+                    gyroController.notifyClickPulse()
+                }
+                emitAction?.let { action ->
+                    emitVolumeKeyEvent(keyName, action)
+                }
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun emitVolumeKeyEvent(keyName: String, action: String) {
+        val quotedKey = JSONObject.quote(keyName)
+        val quotedAction = JSONObject.quote(action)
+        emitJs("window.__axonkeyNativeOnVolumeKey && window.__axonkeyNativeOnVolumeKey($quotedKey, $quotedAction);")
+    }
+
+    private fun currentDisplayRotation(): Int {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                display?.rotation?.let { return it }
+            } catch (_: Exception) {
+            }
+        }
+        return try {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay?.rotation ?: Surface.ROTATION_0
+        } catch (_: Exception) {
+            Surface.ROTATION_0
+        }
     }
 
     private fun resolveSystemNightMode(config: Configuration): Boolean {
@@ -158,6 +331,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        var releaseUp = false
+        var releaseDown = false
+        synchronized(volumeLock) {
+            isActivityResumed = false
+            releaseUp = heldVolUp
+            releaseDown = heldVolDown
+            heldVolUp = false
+            heldVolDown = false
+        }
+        if (releaseUp) emitVolumeKeyEvent("up", "up")
+        if (releaseDown) emitVolumeKeyEvent("down", "up")
+
         super.onPause()
         arbiter.discardPendingPointerDelta()
         gyroController.onPause()
@@ -167,14 +352,23 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        synchronized(volumeLock) {
+            isActivityResumed = true
+        }
+        gyroController.setDisplayRotation(currentDisplayRotation())
         gyroController.onResume()
         emitJs("window.__axonkeyNativeOnLifecycle && window.__axonkeyNativeOnLifecycle('resumed');")
     }
 
     override fun onDestroy() {
+        displayManager?.unregisterDisplayListener(displayListener)
+        displayManager = null
         voiceController.onSocketClosedOrFailed()
         gyroController.destroy()
         lanDiscoveryClient.shutdown()
+        if (::appUpdateInstaller.isInitialized) {
+            appUpdateInstaller.shutdown()
+        }
         arbiter.shutdown()
         super.onDestroy()
     }
@@ -525,6 +719,85 @@ class MainActivity : AppCompatActivity() {
             gyroController.recenter()
             return arbiter.sendPointerRecenter()
         }
+
+        @JavascriptInterface
+        fun notifyPointerClickPulse() {
+            gyroController.notifyClickPulse()
+        }
+
+        @JavascriptInterface
+        fun setVolumeKeyMouseConfig(active: Boolean, mode: String) {
+            val normalizedMode = when (val clean = mode.trim().lowercase(Locale.US)) {
+                "lr", "rl", "scroll" -> clean
+                else -> "off"
+            }
+            val effectiveActive = active && normalizedMode != "off"
+            var releaseUp = false
+            var releaseDown = false
+
+            synchronized(volumeLock) {
+                val shouldRelease = !effectiveActive || normalizedMode != volumeCaptureMode
+                if (shouldRelease) {
+                    releaseUp = heldVolUp
+                    releaseDown = heldVolDown
+                    heldVolUp = false
+                    heldVolDown = false
+                }
+                volumeCaptureActive = effectiveActive
+                volumeCaptureMode = normalizedMode
+            }
+
+            if (releaseUp) emitVolumeKeyEvent("up", "up")
+            if (releaseDown) emitVolumeKeyEvent("down", "up")
+        }
+
+        @JavascriptInterface
+        fun setScreenOrientationMode(mode: String) {
+            val normalized = mode.trim().lowercase(Locale.US)
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                requestedOrientation = when (normalized) {
+                    "landscape" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    "system" -> ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+                    else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                }
+                gyroController.setDisplayRotation(currentDisplayRotation())
+            }
+        }
+
+        @JavascriptInterface
+        fun getAppVersionInfo(): String = appUpdateInstaller.getAppVersionInfoJson()
+
+        @JavascriptInterface
+        fun openExternalUrl(url: String): Boolean {
+            val trimmed = url.trim()
+            val uri = runCatching { Uri.parse(trimmed) }.getOrNull() ?: return false
+            if (uri.scheme?.lowercase(Locale.US) != "https" || uri.host.isNullOrBlank()) {
+                return false
+            }
+            return try {
+                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        @JavascriptInterface
+        fun checkGithubRelease(repoSlug: String) {
+            appUpdateInstaller.checkLatestGithubRelease(repoSlug)
+        }
+
+        @JavascriptInterface
+        fun downloadAndInstallApk(url: String, expectedSha256: String, version: String) {
+            appUpdateInstaller.downloadAndInstallApk(url, expectedSha256, version)
+        }
+
+        @JavascriptInterface
+        fun installDownloadedApk(): Boolean = appUpdateInstaller.installPendingApk()
 
         @JavascriptInterface
         fun startVoiceStream(requestId: String): Double = voiceController.startVoiceStream(requestId)

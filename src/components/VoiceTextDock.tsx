@@ -8,7 +8,11 @@ import { isNativeShell, triggerHaptic } from '../transport/nativeBridge'
 const WAVE_WEIGHTS = [0.3, 0.48, 0.68, 0.86, 0.96, 1.0, 0.96, 0.86, 0.68, 0.48, 0.3]
 const CANCEL_SLIDE_PX = 42
 
-export function VoiceTextDock() {
+interface VoiceTextDockProps {
+  compactLandscape?: boolean
+}
+
+export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) {
   const dockMode = useMobileStore((s) => s.localFeel.preferredDockMode)
   const effectiveTheme = useMobileStore((s) => s.effectiveTheme)
   const updateLocalFeel = useMobileStore((s) => s.updateLocalFeel)
@@ -130,6 +134,121 @@ export function VoiceTextDock() {
     }
   }
 
+  // Split Landscape Thumb-Zone Dock (fits cleanly inside Left Control Rail w-[208px])
+  if (compactLandscape) {
+    return (
+      <div className="mt-auto pt-2 border-t ak-border space-y-1.5">
+        {dockMode === 'voice' ? (
+          <div className="flex items-stretch gap-1.5">
+            <button
+              type="button"
+              onClick={toggleDockMode}
+              aria-label="切换到键盘输入"
+              className="tile-surface ak-elevated ak-text-2 w-10 rounded-2xl border inline-flex flex-col items-center justify-center gap-0.5 shrink-0 touch-none"
+            >
+              <Keyboard className="w-3.5 h-3.5" />
+              <span className="text-[9px] ak-text-3">键盘</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={!connected}
+              onPointerDown={(e) => {
+                e.currentTarget.setPointerCapture?.(e.pointerId)
+                startHoldVoice(e.clientY)
+              }}
+              onPointerMove={(e) => moveHoldVoice(e.clientY)}
+              onPointerUp={() => finishHoldVoice(false)}
+              onPointerCancel={() => finishHoldVoice(true)}
+              className={clsx(
+                'relative flex-1 min-h-[54px] px-2.5 py-1.5 rounded-2xl border text-xs font-semibold flex flex-col items-center justify-center gap-0.5 select-none touch-none transition-all overflow-hidden text-center',
+                !connected
+                  ? 'ak-pill ak-text-3 opacity-80'
+                  : canceling
+                    ? 'bg-amber-500 text-white border-amber-600'
+                    : recording
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                      : 'tile-surface ak-voice-idle',
+              )}
+            >
+              <div className="inline-flex items-center gap-1">
+                <Mic className="w-3.5 h-3.5 shrink-0" />
+                <span className="font-bold truncate max-w-[110px]">
+                  {!connected
+                    ? '未连接语音'
+                    : canceling
+                      ? '松手取消'
+                      : recording
+                        ? '松开发送'
+                        : '按住说话'}
+                </span>
+              </div>
+              <span className="text-[9.5px] opacity-80 truncate max-w-[120px]">
+                {bindingTrimmed ? `${bindingTrimmed} + 虚拟麦` : '虚拟麦克风'}
+              </span>
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <input
+              ref={inputRef}
+              type="text"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  handleSendText(true)
+                }
+              }}
+              placeholder="输入直达电脑…"
+              className="ak-input w-full h-9 px-2.5 rounded-xl border text-xs focus:outline-none focus:border-blue-500"
+            />
+            <div className="grid grid-cols-4 gap-1">
+              <button
+                type="button"
+                onClick={toggleDockMode}
+                aria-label="切换到按住说话"
+                className="tile-surface ak-elevated ak-text-2 h-8 rounded-lg border inline-flex items-center justify-center"
+              >
+                <Mic className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic('tap')
+                  setTextMode((m) => (m === 'paste' ? 'type' : 'paste'))
+                }}
+                aria-label="切换文本注入方式"
+                className="tile-surface ak-elevated ak-text-2 h-8 rounded-lg border text-[10px] font-semibold"
+              >
+                {textMode === 'paste' ? '粘贴' : '键入'}
+              </button>
+              <button
+                type="button"
+                disabled={sendDisabled}
+                onClick={() => handleSendText(false)}
+                aria-label="仅发送文本"
+                className="tile-surface ak-elevated ak-text-1 h-8 rounded-lg border disabled:opacity-40 inline-flex items-center justify-center"
+              >
+                <Send className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                disabled={sendDisabled}
+                onClick={() => handleSendText(true)}
+                aria-label="发送并回车"
+                className="h-8 rounded-lg bg-blue-600 text-white disabled:opacity-40 inline-flex items-center justify-center"
+              >
+                <CornerDownLeft className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="ak-dock shrink-0 px-3 pt-1.5 safe-bottom">
       {delivery &&
@@ -184,7 +303,7 @@ export function VoiceTextDock() {
             type="button"
             disabled={!connected}
             onPointerDown={(e) => {
-              e.currentTarget.setPointerCapture(e.pointerId)
+              e.currentTarget.setPointerCapture?.(e.pointerId)
               startHoldVoice(e.clientY)
             }}
             onPointerMove={(e) => moveHoldVoice(e.clientY)}

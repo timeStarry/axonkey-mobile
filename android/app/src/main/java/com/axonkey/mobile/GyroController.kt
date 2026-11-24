@@ -5,7 +5,10 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.SystemClock
+import android.view.Surface
 import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.sin
@@ -13,15 +16,15 @@ import kotlin.math.sqrt
 import kotlin.math.tan
 
 /**
- * Dual-Mode Native Gyroscope Engine for Axonkey Mobile v2.
+ * Dual-Mode Native Gyroscope Engine for Axonkey Mobile v4.
  *
- * Coordinate convention:
- * - Android device frame D: +X right edge, +Y top edge (IR-blaster / TV remote pointing axis), +Z out of screen.
- * - Pointing axis in D: f_D = (0, 1, 0).
+ * Coordinate convention (remapped to current Display screen frame S):
+ * - Screen frame S: +X screen-right, +Y screen-top (forward pointing axis), +Z out of screen.
+ * - Pointing axis in S: f_S = (0, 1, 0).
  * - World frame W (from SensorManager.getRotationMatrixFromVector): +Z up opposite gravity, U = (0, 0, 1).
  *
- * Mode A ("relative"): Gravity-aligned tangent basis air-mouse (zero roll coupling) + hold clutch.
- * Mode B ("absolute"): Recentered virtual plane ray-projection aim + 2D shared-cutoff One-Euro Filter.
+ * Mode A ("relative"): Gravity-aligned tangent basis air-mouse (zero roll coupling) + hold clutch + 75ms click stabilizer.
+ * Mode B ("absolute"): Recentered virtual plane ray-projection aim + 2D shared-cutoff One-Euro Filter + 75ms click stabilizer.
  */
 class GyroController(
     context: Context,
@@ -52,6 +55,14 @@ class GyroController(
         private const val ASPECT_H_OVER_W = 9.0 / 16.0
         private const val MIN_ABS_SEND_INTERVAL_US = 7_500L
 
+        // 75ms Click-Stabilizer constants (suppresses involuntary thumb/finger click-jerk)
+        private const val CLICK_STABILIZE_WINDOW_NS = 75_000_000L
+        private const val CLICK_STABILIZE_REL_MAX_RAD_S = 0.65
+        private const val CLICK_STABILIZE_REL_RAMP_END_RAD_S = 1.10
+        private const val CLICK_STABILIZE_REL_SCALE = 0.15
+        private val COS_2_5_DEG: Double = cos(Math.toRadians(2.5))
+        private const val CLICK_STABILIZE_ABS_BLEND = 0.05
+
         // 2D Shared-Cutoff One-Euro Filter constants (normalized [0, 1] screen coords)
         private const val EURO_F_MIN = 1.5
         private const val EURO_BETA = 8.0
@@ -73,10 +84,22 @@ class GyroController(
     private var sessionAuthorized: Boolean = false
     private var sensorsRegistered: Boolean = false
     private var lastReportedState: String = MODE_OFF
+    private var displayRotation: Int = Surface.ROTATION_0
 
-    // Latest 3x3 rotation matrix R mapping device D -> world W (row-major)
+    // Raw 3x3 sensor matrix (device D -> world W) and display-remapped 3x3 matrix (screen S -> world W)
+    private val rawRotMatrix = FloatArray(9)
     private val rotMatrix = FloatArray(9)
+    private var hasRawRotationMatrix: Boolean = false
     private var hasRotationMatrix: Boolean = false
+
+    // 75ms click-stabilizer state
+    private var clickStabilizeUntilNs: Long = 0L
+    private var hasClickAnchor: Boolean = false
+    private var anchorRx: Double = 0.0
+    private var anchorRy: Double = 1.0
+    private var anchorRz: Double = 0.0
+    private var anchorU: Double = 0.5
+    private var anchorV: Double = 0.5
 
     // Mode A integration & micro-coalescing state
     private var lastGyroTimestampNs: Long = 0L
@@ -104,6 +127,38 @@ class GyroController(
         dCutoff = EURO_D_CUTOFF
     )
 
+    fun notifyClickPulse() {
+        val untilNs = SystemClock.elapsedRealtimeNanos() + CLICK_STABILIZE_WINDOW_NS
+        synchronized(stateLock) {
+            clickStabilizeUntilNs = max(clickStabilizeUntilNs, untilNs)
+        }
+    }
+
+    fun setDisplayRotation(rotation: Int) {
+        val normalized = when (rotation) {
+            Surface.ROTATION_90 -> Surface.ROTATION_90
+            Surface.ROTATION_180 -> Surface.ROTATION_180
+            Surface.ROTATION_270 -> Surface.ROTATION_270
+            else -> Surface.ROTATION_0
+        }
+        synchronized(stateLock) {
+            if (displayRotation == normalized) return
+            displayRotation = normalized
+            lastGyroTimestampNs = 0L
+            accumRelDx = 0.0
+            accumRelDy = 0.0
+            hasClickAnchor = false
+            oneEuroFilter.reset()
+            if (hasRawRotationMatrix) {
+                hasRotationMatrix = remapRawMatrixLocked()
+                if (desiredMode == MODE_ABSOLUTE) {
+                    hasCalibration = false
+                    pendingRecenter = true
+                }
+            }
+        }
+    }
+
     fun setConfig(rawMode: String, rawSensitivity: Double) {
         val normalizedMode = when (rawMode.trim().lowercase()) {
             MODE_RELATIVE -> MODE_RELATIVE
@@ -126,6 +181,7 @@ class GyroController(
                 lastGyroTimestampNs = 0L
                 accumRelDx = 0.0
                 accumRelDy = 0.0
+                hasClickAnchor = false
                 oneEuroFilter.reset()
                 when (normalizedMode) {
                     MODE_OFF -> {
@@ -168,6 +224,7 @@ class GyroController(
             clutchEngaged = engaged
             // Always reset time baseline on clutch transition so paused intervals are never integrated
             lastGyroTimestampNs = 0L
+            hasClickAnchor = false
             oneEuroFilter.resetTimestamp()
 
             if (!engaged) {
@@ -192,9 +249,10 @@ class GyroController(
 
     fun recenter() {
         var stateToReport: String? = null
-        var calibratedImmediately = false
+        var calibratedImmediately: Boolean
 
         synchronized(stateLock) {
+            hasClickAnchor = false
             oneEuroFilter.reset()
             if (hasRotationMatrix) {
                 calibratedImmediately = captureCalibrationFromCurrentMatrixLocked()
@@ -223,6 +281,7 @@ class GyroController(
                 lastGyroTimestampNs = 0L
                 accumRelDx = 0.0
                 accumRelDy = 0.0
+                hasClickAnchor = false
                 oneEuroFilter.resetTimestamp()
             }
             updateSensorRegistrationLocked()
@@ -238,6 +297,7 @@ class GyroController(
             lastGyroTimestampNs = 0L
             accumRelDx = 0.0
             accumRelDy = 0.0
+            hasClickAnchor = false
             oneEuroFilter.resetTimestamp()
             updateSensorRegistrationLocked()
         }
@@ -272,6 +332,35 @@ class GyroController(
         }
     }
 
+    private fun remapRawMatrixLocked(): Boolean {
+        return when (displayRotation) {
+            Surface.ROTATION_90 -> SensorManager.remapCoordinateSystem(
+                rawRotMatrix,
+                SensorManager.AXIS_Y,
+                SensorManager.AXIS_MINUS_X,
+                rotMatrix
+            )
+            Surface.ROTATION_180 -> SensorManager.remapCoordinateSystem(
+                rawRotMatrix,
+                SensorManager.AXIS_MINUS_X,
+                SensorManager.AXIS_MINUS_Y,
+                rotMatrix
+            )
+            Surface.ROTATION_270 -> SensorManager.remapCoordinateSystem(
+                rawRotMatrix,
+                SensorManager.AXIS_MINUS_Y,
+                SensorManager.AXIS_X,
+                rotMatrix
+            )
+            else -> SensorManager.remapCoordinateSystem(
+                rawRotMatrix,
+                SensorManager.AXIS_X,
+                SensorManager.AXIS_Y,
+                rotMatrix
+            )
+        }
+    }
+
     private fun handleRotationVector(event: SensorEvent) {
         var sendAbs = false
         var outU = 0f
@@ -280,12 +369,15 @@ class GyroController(
         var stateToReport: String? = null
 
         synchronized(stateLock) {
-            SensorManager.getRotationMatrixFromVector(rotMatrix, event.values)
-            hasRotationMatrix = true
+            SensorManager.getRotationMatrixFromVector(rawRotMatrix, event.values)
+            hasRawRotationMatrix = true
+            hasRotationMatrix = remapRawMatrixLocked()
+            if (!hasRotationMatrix) return
 
             if (pendingRecenter || (!hasCalibration && desiredMode == MODE_ABSOLUTE)) {
                 if (captureCalibrationFromCurrentMatrixLocked()) {
                     pendingRecenter = false
+                    hasClickAnchor = false
                     oneEuroFilter.reset()
                 } else {
                     stateToReport = reportStateLocked("vertical_guard")
@@ -294,7 +386,7 @@ class GyroController(
             }
 
             if (desiredMode == MODE_ABSOLUTE && clutchEngaged && sessionAuthorized && hasCalibration) {
-                // Current pointing ray in world coords: d = R * f_D where f_D = (0, 1, 0) -> 2nd column of R
+                // Current pointing ray in world coords: d = R_S * f_S where f_S = (0, 1, 0) -> 2nd column of R_S
                 val dx = rotMatrix[1].toDouble()
                 val dy = rotMatrix[4].toDouble()
                 val dz = rotMatrix[7].toDouble()
@@ -309,6 +401,7 @@ class GyroController(
                     val projZ = rx * f0x + ry * f0y + rz * f0z
 
                     if (projZ <= ABS_MIN_FORWARD_Z) {
+                        hasClickAnchor = false
                         oneEuroFilter.resetTimestamp()
                         stateToReport = reportStateLocked("out_of_bounds")
                     } else {
@@ -321,7 +414,45 @@ class GyroController(
                         val rawU = (0.5 + projX / (2.0 * projZ * tanThetaH)).coerceIn(0.0, 1.0)
                         val rawV = (0.5 - projY / (2.0 * projZ * tanThetaV)).coerceIn(0.0, 1.0)
 
-                        val (filtU, filtV) = oneEuroFilter.filter(rawU, rawV, event.timestamp)
+                        val inClickStabilize = SystemClock.elapsedRealtimeNanos() < clickStabilizeUntilNs
+                        val effectiveRawU: Double
+                        val effectiveRawV: Double
+                        var freezeAnchor = false
+
+                        if (inClickStabilize) {
+                            if (!hasClickAnchor) {
+                                anchorRx = rx
+                                anchorRy = ry
+                                anchorRz = rz
+                                anchorU = rawU
+                                anchorV = rawV
+                                hasClickAnchor = true
+                            }
+                            val dot = (rx * anchorRx + ry * anchorRy + rz * anchorRz).coerceIn(-1.0, 1.0)
+                            if (dot >= COS_2_5_DEG) {
+                                // Ray shift < 2.5 deg during click pulse: heavily damp so cursor stays dead-on target
+                                effectiveRawU = anchorU + CLICK_STABILIZE_ABS_BLEND * (rawU - anchorU)
+                                effectiveRawV = anchorV + CLICK_STABILIZE_ABS_BLEND * (rawV - anchorV)
+                                freezeAnchor = true
+                            } else {
+                                effectiveRawU = rawU
+                                effectiveRawV = rawV
+                            }
+                        } else {
+                            effectiveRawU = rawU
+                            effectiveRawV = rawV
+                        }
+
+                        val (filtU, filtV) = oneEuroFilter.filter(effectiveRawU, effectiveRawV, event.timestamp)
+                        if (!freezeAnchor) {
+                            anchorRx = rx
+                            anchorRy = ry
+                            anchorRz = rz
+                            anchorU = filtU
+                            anchorV = filtV
+                            hasClickAnchor = true
+                        }
+
                         val nowUs = WireFrameCodec.nowSampleTimeUs()
                         if (nowUs - lastAbsSendTimeUs >= MIN_ABS_SEND_INTERVAL_US) {
                             lastAbsSendTimeUs = nowUs
@@ -354,13 +485,13 @@ class GyroController(
                 return
             }
 
-            // World up in device frame D: u_D = R^T * (0, 0, 1) = third row of R
+            // World up in screen frame S: u_S = R_S^T * (0, 0, 1) = third row of R_S
             val ux = rotMatrix[6].toDouble()
             val uy = rotMatrix[7].toDouble()
             val uz = rotMatrix[8].toDouble()
 
-            // With pointing axis f_D = (0, 1, 0):
-            // f_D x u_D = (uz, 0, -ux), norm h = hypot(uz, ux)
+            // With pointing axis f_S = (0, 1, 0):
+            // f_S x u_S = (uz, 0, -ux), norm h = hypot(uz, ux)
             val h = hypot(uz, ux)
             if (h < SIN_15_DEG) {
                 // Within 15 deg of world vertical: pause cleanly without switching axes
@@ -376,21 +507,32 @@ class GyroController(
                 if (prevNs != 0L) {
                     val dt = (event.timestamp - prevNs) * 1e-9
                     if (dt > 0.0 && dt <= MAX_SENSOR_DT_S) {
-                        // Orthonormal tangent basis orthogonal to f_D = (0, 1, 0):
-                        // r_D = (uz / h, 0, -ux / h)  (view-right)
-                        // p_D = r_D x f_D = (ux / h, 0, uz / h)  (view-up)
+                        // Orthonormal tangent basis orthogonal to f_S = (0, 1, 0):
+                        // r_S = (uz / h, 0, -ux / h)  (view-right)
+                        // p_S = r_S x f_S = (ux / h, 0, uz / h)  (view-up)
                         val rDx = uz / h
                         val rDz = -ux / h
                         val pDx = ux / h
                         val pDz = uz / h
 
-                        val wx = event.values[0].toDouble()
-                        // wy = event.values[1] around f_D has zero dot product with r_D and p_D (zero roll coupling!)
-                        val wz = event.values[2].toDouble()
+                        // Transform raw device gyroscope vector (wx, wy, wz)_D into display screen basis S
+                        // matching SensorManager.remapCoordinateSystem for ROTATION_0 / 90 / 180 / 270.
+                        // Note: wyScreen (around pointing axis f_S = (0, 1, 0)) has zero dot product with r_S and p_S!
+                        val rawWx = event.values[0].toDouble()
+                        val rawWy = event.values[1].toDouble()
+                        val rawWz = event.values[2].toDouble()
+
+                        val wxScreen = when (displayRotation) {
+                            Surface.ROTATION_90 -> -rawWy
+                            Surface.ROTATION_180 -> -rawWx
+                            Surface.ROTATION_270 -> rawWy
+                            else -> rawWx
+                        }
+                        val wzScreen = rawWz
 
                         // Tangential angular velocities: a_x right, a_y up
-                        val ax = -(wx * pDx + wz * pDz)
-                        val ay = (wx * rDx + wz * rDz)
+                        val ax = -(wxScreen * pDx + wzScreen * pDz)
+                        val ay = (wxScreen * rDx + wzScreen * rDz)
 
                         val s = hypot(ax, ay)
                         if (s > REL_DEADZONE_RAD_S) {
@@ -398,7 +540,20 @@ class GyroController(
                             val b2 = b * b
                             val w02 = REL_W0 * REL_W0
                             val gain = (REL_K0 + (REL_K1 - REL_K0) * (b2 / (b2 + w02))) * sensitivity
-                            val step = gain * b * dt
+                            var step = gain * b * dt
+
+                            if (SystemClock.elapsedRealtimeNanos() < clickStabilizeUntilNs) {
+                                val clickScale = when {
+                                    s < CLICK_STABILIZE_REL_MAX_RAD_S -> CLICK_STABILIZE_REL_SCALE
+                                    s < CLICK_STABILIZE_REL_RAMP_END_RAD_S -> {
+                                        val t = (s - CLICK_STABILIZE_REL_MAX_RAD_S) /
+                                            (CLICK_STABILIZE_REL_RAMP_END_RAD_S - CLICK_STABILIZE_REL_MAX_RAD_S)
+                                        CLICK_STABILIZE_REL_SCALE + (1.0 - CLICK_STABILIZE_REL_SCALE) * t
+                                    }
+                                    else -> 1.0
+                                }
+                                step *= clickScale
+                            }
 
                             accumRelDx += step * (ax / s)
                             accumRelDy += step * (-ay / s)
@@ -430,7 +585,7 @@ class GyroController(
     }
 
     /**
-     * Captures f_0 = R_0 * f_D, r_0 = normalize(f_0 x U), u_0 = r_0 x f_0 in world coordinates.
+     * Captures f_0 = R_0 * f_S, r_0 = normalize(f_0 x U), u_0 = r_0 x f_0 in world coordinates.
      * Returns false if f_0 is within 15 degrees of world vertical U = (0, 0, 1).
      */
     private fun captureCalibrationFromCurrentMatrixLocked(): Boolean {
@@ -499,6 +654,7 @@ class GyroController(
         } else if (!shouldRun && sensorsRegistered) {
             sensorManager.unregisterListener(this)
             sensorsRegistered = false
+            hasRawRotationMatrix = false
             hasRotationMatrix = false
             lastGyroTimestampNs = 0L
         }

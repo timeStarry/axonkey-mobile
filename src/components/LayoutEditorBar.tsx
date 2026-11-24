@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import {
   Check,
+  Compass,
   Gamepad2,
   LayoutGrid,
   MousePointer2,
   Plus,
   Settings2,
   Sparkles,
+  Wand2,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { DeckZoneKind, MobileDeckPage } from '../protocol/types'
@@ -24,6 +26,7 @@ export function LayoutEditorBar({ currentPage }: LayoutEditorBarProps) {
   const setWorkspaceMode = useMobileStore((s) => s.setWorkspaceMode)
   const setLayoutEditing = useMobileStore((s) => s.setLayoutEditing)
   const setPageManagerOpen = useMobileStore((s) => s.setPageManagerOpen)
+  const setPresetWizardOpen = useMobileStore((s) => s.setPresetWizardOpen)
   const addTileToPage = useMobileStore((s) => s.addTileToPage)
   const addZoneToPage = useMobileStore((s) => s.addZoneToPage)
   const openTileEditor = useMobileStore((s) => s.openTileEditor)
@@ -148,6 +151,18 @@ export function LayoutEditorBar({ currentPage }: LayoutEditorBarProps) {
             />
             <span>加区块</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic('tap')
+              setPresetWizardOpen(true)
+            }}
+            className="ak-elevated ak-text-1 h-8 px-2.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1 active:scale-95 transition-transform"
+          >
+            <Wand2 className={clsx('w-3.5 h-3.5', isLight ? 'text-amber-600' : 'text-amber-300')} />
+            <span>预设方案</span>
+          </button>
         </div>
 
         <button
@@ -163,9 +178,9 @@ export function LayoutEditorBar({ currentPage }: LayoutEditorBarProps) {
         </button>
       </div>
 
-      {/* Expandable Zone Type Picker */}
+      {/* Expandable Zone Type Picker (4 Zone Kinds) */}
       {zoneMenuOpen && (
-        <div className="ak-border grid grid-cols-3 gap-1.5 pt-1 border-t">
+        <div className="ak-border grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-1 border-t">
           <button
             type="button"
             onClick={() => handleAddZone('bento-grid')}
@@ -183,6 +198,14 @@ export function LayoutEditorBar({ currentPage }: LayoutEditorBarProps) {
               className={clsx('w-4 h-4', isLight ? 'text-emerald-600' : 'text-emerald-400')}
             />
             <span>内嵌触控/飞鼠</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleAddZone('gesture-pad')}
+            className="ak-well ak-text-1 p-2 rounded-xl border flex flex-col items-center gap-1 text-[11px] font-semibold active:border-blue-500/50"
+          >
+            <Compass className={clsx('w-4 h-4', isLight ? 'text-amber-600' : 'text-amber-400')} />
+            <span>手势触发垫</span>
           </button>
           <button
             type="button"

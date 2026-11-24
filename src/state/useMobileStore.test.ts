@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useMobileStore } from './useMobileStore'
+import { PRESET_ONBOARDED_STORAGE_KEY, useMobileStore } from './useMobileStore'
 import { saveHostProfile, type AxonkeyAndroidBridge } from '../transport/nativeBridge'
 
 describe('useMobileStore (v2 LAN Auto-Discovery & Live Telemetry)', () => {
@@ -102,5 +102,75 @@ describe('useMobileStore (v2 LAN Auto-Discovery & Live Telemetry)', () => {
     window.__axonkeyNativeOnSystemDarkChanged?.(true)
     expect(useMobileStore.getState().effectiveTheme).toBe('dark')
     expect(document.documentElement.dataset.theme).toBe('dark')
+  })
+
+  it('auto-opens PresetWizardSheet once on brand-new QR pairing and sends deck.apply_preset', () => {
+    const sentWssMessages: string[] = []
+    window.AxonkeyNative!.sendWssText = vi.fn((payload: string) => {
+      sentWssMessages.push(payload)
+      return true
+    })
+
+    useMobileStore.setState({ presetWizardOpen: false })
+    expect(window.localStorage.getItem(PRESET_ONBOARDED_STORAGE_KEY)).toBeNull()
+
+    useMobileStore.getState().pairFromOffer({
+      v: 1,
+      hostId: 'pc-new-1',
+      hostName: 'New Studio PC',
+      addrs: ['192.168.1.50:49670'],
+      caCertDerB64: 'CERT',
+      pairToken: '0123456789abcdef0123456789abcdef',
+      expiresAtMs: Date.now() + 60_000,
+    })
+
+    window.__axonkeyNativeOnOpen?.()
+    window.__axonkeyNativeOnMessage?.(
+      JSON.stringify({
+        type: 'pair.result',
+        ok: true,
+        peerId: 'peer-new',
+        peerToken: 'token-new',
+      }),
+    )
+
+    expect(useMobileStore.getState().presetWizardOpen).toBe(true)
+    expect(window.localStorage.getItem(PRESET_ONBOARDED_STORAGE_KEY)).toBe('1')
+
+    // Subsequent server.ready enables sending deck.apply_preset to live PC
+    window.__axonkeyNativeOnMessage?.(
+      JSON.stringify({
+        type: 'server.ready',
+        sessionId: 'sess-live-1',
+        inputEpoch: 1,
+        inputGeneration: 1,
+        leaseId: 1,
+        leaseTtlMs: 5000,
+        tickIntervalMs: 500,
+        hostId: 'pc-new-1',
+        hostName: 'New Studio PC',
+        capabilities: {
+          relativePointer: true,
+          textCommit: true,
+          audioPcm16: true,
+          platform: 'windows',
+        },
+        deckSnapshot: useMobileStore.getState().deck,
+        deckRevision: 1,
+        context: { appId: null, appName: null, profileName: '默认配置' },
+        contextRevision: 1,
+      }),
+    )
+
+    sentWssMessages.length = 0
+    const applied = useMobileStore.getState().applyStarterPreset('vibe-coding', 'system-win-h')
+    expect(applied).toBe(true)
+    expect(useMobileStore.getState().presetWizardOpen).toBe(false)
+    expect(JSON.parse(sentWssMessages[0])).toMatchObject({
+      type: 'deck.apply_preset',
+      sessionId: 'sess-live-1',
+      preset: 'vibe-coding',
+      voicePreset: 'system-win-h',
+    })
   })
 })

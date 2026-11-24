@@ -10,10 +10,13 @@ import {
   type PointerButtonPhase,
   type ServerMessage,
   type SessionPhase,
+  type StarterPresetId,
+  type SystemTouchpadGesture,
   type TextCommitMode,
   type TileGestureKind,
+  type VoicePresetKind,
 } from '../protocol/types'
-import { DEFAULT_DEMO_DECK } from './defaultDeck'
+import { DEFAULT_DEMO_DECK, buildDemoPresetDeck } from './defaultDeck'
 import {
   cancelNativeVoiceStream,
   clearNativeSessionAuth,
@@ -266,6 +269,19 @@ export class DemoLoopbackTransport implements TransportAdapter {
           deckSnapshot: structuredClone(this.deck),
         })
       }
+      return true
+    }
+    if (msg.type === 'deck.apply_preset') {
+      this.deck = buildDemoPresetDeck(msg.preset, msg.voicePreset)
+      this.deckRev += 1
+      this.emit({
+        type: 'deck.update.result',
+        requestId: msg.requestId,
+        ok: true,
+        conflict: false,
+        deckRevision: this.deckRev,
+        deckSnapshot: structuredClone(this.deck),
+      })
       return true
     }
     return true
@@ -546,6 +562,35 @@ export class MobileSessionClient {
       pressId,
     })
     return ok ? requestId : null
+  }
+
+  sendTouchpadGesture(gesture: SystemTouchpadGesture): boolean {
+    if (!this.isInputReady() || !this.sessionId) return false
+    this.flushPointerMotion()
+    return this.sendSequenced({
+      type: 'touchpad.gesture',
+      sessionId: this.sessionId,
+      inputEpoch: this.inputEpoch,
+      seq: 0,
+      leaseId: this.leaseId,
+      gesture,
+    })
+  }
+
+  sendApplyPreset(preset: StarterPresetId, voicePreset?: VoicePresetKind): string | null {
+    if (!this.sessionId || this.phase !== 'active') return null
+    this.queuedDeckPatch = null
+    const requestId = this.nextRequestId('preset')
+    const ok = this.sendRaw({
+      type: 'deck.apply_preset',
+      sessionId: this.sessionId,
+      requestId,
+      preset,
+      ...(voicePreset ? { voicePreset } : {}),
+    })
+    if (!ok) return null
+    this.inFlightDeckRequestId = requestId
+    return requestId
   }
 
   sendTextCommit(text: string, mode: TextCommitMode, submit: boolean): string | null {

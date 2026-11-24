@@ -52,8 +52,28 @@ export interface ForegroundContext {
 }
 
 export type PageLayout = 'remote' | 'grid'
-export type DeckZoneKind = 'bento-grid' | 'dpad-3x3' | 'pointer-pad'
+export type DeckZoneKind = 'bento-grid' | 'dpad-3x3' | 'pointer-pad' | 'gesture-pad'
 export type EmbeddedPointerMode = 'trackpad' | 'relative'
+export type EmbeddedPadHeight = 'compact' | 'standard' | 'tall'
+
+export type SystemTouchpadGesture =
+  | 'three_finger_up'
+  | 'three_finger_down'
+  | 'three_finger_left'
+  | 'three_finger_right'
+  | 'three_finger_tap'
+
+export type StarterPresetId =
+  | 'daily-remote'
+  | 'vibe-coding'
+  | 'presentation-media'
+  | 'blank-canvas'
+
+export type VoicePresetKind = 'doubao-alt' | 'system-win-h' | 'ctrl-win' | 'pure-mic'
+
+export type VolumeKeyMouseMode = 'off' | 'lr' | 'rl' | 'scroll'
+export type ScreenOrientationMode = 'portrait' | 'landscape' | 'system'
+export type AirMouseHandedness = 'right' | 'left'
 
 export interface MobileTile {
   id: string
@@ -76,11 +96,16 @@ export interface MobileDeckZone {
   columns?: 2 | 3 | 4
   /** For 'pointer-pad': embedded pointer sub-mode ('trackpad' | 'relative') */
   pointerMode?: EmbeddedPointerMode
+  /** Optional height preset for embedded 'pointer-pad' or 'gesture-pad' */
+  padHeight?: EmbeddedPadHeight
+  /** When false on 'pointer-pad', hides the bottom Left/Scroll/Right button strip (default true) */
+  showButtons?: boolean
   /**
-   * Ordered tile IDs rendered inside this zone (for 'bento-grid' and 'dpad-3x3').
-   * For 'dpad-3x3', expects up to 9 slot IDs in 3x3 row-major order:
-   * [topLeft, up, topRight, left, ok, right, bottomLeft, down, bottomRight]
-   * (empty string "" allowed for blank corner/slot).
+   * Ordered tile IDs rendered inside this zone.
+   * - 'bento-grid': variable length
+   * - 'dpad-3x3': up to 9 slot IDs [topLeft, up, topRight, left, ok, right, bottomLeft, down, bottomRight]
+   * - 'gesture-pad': up to 6 slot IDs [up, down, left, right, tap, double]
+   * (empty string "" allowed for blank slot).
    */
   tileIds: string[]
 }
@@ -196,6 +221,14 @@ export type ClientMessage =
       pressId: string
     }
   | {
+      type: 'touchpad.gesture'
+      sessionId: string
+      inputEpoch: number
+      seq: number
+      leaseId: number
+      gesture: SystemTouchpadGesture
+    }
+  | {
       type: 'text.commit'
       sessionId: string
       inputEpoch: number
@@ -213,6 +246,13 @@ export type ClientMessage =
       requestId: string
       baseRevision: number
       layoutPatch: DeckLayoutPatch
+    }
+  | {
+      type: 'deck.apply_preset'
+      sessionId: string
+      requestId: string
+      preset: StarterPresetId
+      voicePreset?: VoicePresetKind
     }
   | {
       type: 'input.cancel'

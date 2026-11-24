@@ -11,8 +11,11 @@ import type {
   MobileDeckZone,
   MobileTile,
   PairingOfferQr,
+  PointerButtonName,
   SessionPhase,
+  StarterPresetId,
   TextCommitMode,
+  VoicePresetKind,
 } from '../protocol/types'
 import {
   MAX_TILES_PER_PAGE,
@@ -22,10 +25,11 @@ import {
   createPageFromTemplate,
   cycleBentoSpan,
   normalizeDpadSlotIds,
+  normalizeGesturePadSlotIds,
   normalizePageZones,
   type PageTemplateId,
 } from '../input/bentoLayout'
-import { DEFAULT_DEMO_DECK } from '../transport/defaultDeck'
+import { DEFAULT_DEMO_DECK, buildDemoPresetDeck } from '../transport/defaultDeck'
 import {
   applyEffectiveThemeToDocument,
   discoverNativeLanHosts,
@@ -41,14 +45,19 @@ import {
   setKeepScreenOn,
   setNativeGyroClutch,
   setNativeGyroConfig,
+  setNativeScreenOrientationMode,
+  setNativeVolumeKeyMouseConfig,
   triggerHaptic,
   updateSavedHostAddrs,
   type AirMouseFeelMode,
+  type AirMouseHandedness,
   type EffectiveTheme,
   type LocalFeelPreferences,
   type PointerTabMode,
   type SavedHostProfile,
+  type ScreenOrientationMode,
   type ThemeMode,
+  type VolumeKeyMouseMode,
 } from '../transport/nativeBridge'
 import {
   DemoLoopbackTransport,
@@ -57,7 +66,17 @@ import {
 } from '../transport/sessionClient'
 
 export type WorkspaceMode = 'remote' | 'deck' | 'pointer'
-export type { AirMouseFeelMode, EffectiveTheme, PointerTabMode, ThemeMode }
+export type {
+  AirMouseFeelMode,
+  AirMouseHandedness,
+  EffectiveTheme,
+  PointerTabMode,
+  ScreenOrientationMode,
+  ThemeMode,
+  VolumeKeyMouseMode,
+}
+
+export const PRESET_ONBOARDED_STORAGE_KEY = 'axonkey_mobile_preset_onboarded_v1'
 
 export interface TileFeedback {
   status: 'ok' | 'error'
@@ -103,6 +122,9 @@ interface MobileStoreState {
   localFeel: LocalFeelPreferences
   pairingOpen: boolean
   feelSheetOpen: boolean
+  aboutSheetOpen: boolean
+  presetWizardOpen: boolean
+  embeddedAirMouseActive: boolean
 
   layoutEditing: boolean
   editingTileTarget: EditingTileTarget | null
@@ -132,6 +154,10 @@ interface MobileStoreState {
   setActivePage: (pageId: string) => void
   setPairingOpen: (open: boolean) => void
   setFeelSheetOpen: (open: boolean) => void
+  setAboutSheetOpen: (open: boolean) => void
+  setPresetWizardOpen: (open: boolean) => void
+  setEmbeddedAirMouseZoneActive: (zoneId: string, active: boolean) => void
+  applyStarterPreset: (preset: StarterPresetId, voicePreset?: VoicePresetKind) => boolean
   setLayoutEditing: (editing: boolean) => void
   openTileEditor: (pageId: string, zoneId: string, tileId: string) => void
   closeTileEditor: () => void
@@ -150,7 +176,9 @@ interface MobileStoreState {
   updateZone: (
     pageId: string,
     zoneId: string,
-    patch: Partial<Pick<MobileDeckZone, 'columns' | 'pointerMode' | 'tileIds'>>,
+    patch: Partial<
+      Pick<MobileDeckZone, 'columns' | 'pointerMode' | 'padHeight' | 'showButtons' | 'tileIds'>
+    >,
   ) => void
   moveZone: (pageId: string, zoneId: string, dir: -1 | 1) => void
   deleteZone: (pageId: string, zoneId: string) => void
@@ -165,11 +193,52 @@ interface MobileStoreState {
 }
 
 const pendingTileReqMap = new Map<string, string>()
+const activeEmbeddedAirMouseZoneIds = new Set<string>()
+const heldVolKeyButtons = new Map<
+  'up' | 'down',
+  { button: PointerButtonName; pressId: string }
+>()
 
 let singletonClient: MobileSessionClient | null = null
 let listenersBound = false
 let discoveryResetTimer: ReturnType<typeof setTimeout> | null = null
 let gyroGuardTimer: ReturnType<typeof setTimeout> | null = null
+let volPressSeq = 1
+let appPausedRuntime = false
+let textInputFocusedRuntime = false
+let lastVolCaptureActive: boolean | null = null
+let lastVolCaptureMode: VolumeKeyMouseMode | null = null
+
+function computeShouldCaptureVolumeKeys(state: MobileStoreState): boolean {
+  if (appPausedRuntime || textInputFocusedRuntime) return false
+  if (state.phase !== 'active' || state.layoutEditing) return false
+  if (state.localFeel.volumeKeyMouseMode === 'off') return false
+  const anySheetOpen =
+    state.pairingOpen ||
+    state.feelSheetOpen ||
+    state.pageManagerOpen ||
+    Boolean(state.editingTileTarget) ||
+    state.aboutSheetOpen ||
+    state.presetWizardOpen
+  if (anySheetOpen) return false
+
+  const inStandaloneAirMouse =
+    state.workspaceMode === 'pointer' && state.pointerTab === 'airmouse'
+  const inEmbeddedAirMouse =
+    state.workspaceMode !== 'pointer' && state.embeddedAirMouseActive
+  return inStandaloneAirMouse || inEmbeddedAirMouse
+}
+
+function releaseHeldVolumeKeyButtons(client: MobileSessionClient | null): void {
+  if (heldVolKeyButtons.size === 0) return
+  const entries = Array.from(heldVolKeyButtons.values())
+  heldVolKeyButtons.clear()
+  if (client) {
+    for (const entry of entries) {
+      client.sendPointerButton(entry.button, 'up', entry.pressId)
+    }
+  }
+}
 
 function buildNativeTransportFactory() {
   return (host: SavedHostProfile, attempt = 0) => {
@@ -202,10 +271,22 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       },
       onPaired: (host) => {
         const nextHosts = saveHostProfile(host)
+        let shouldAutoOpenPresetWizard = false
+        if (typeof window !== 'undefined') {
+          try {
+            if (!window.localStorage.getItem(PRESET_ONBOARDED_STORAGE_KEY)) {
+              window.localStorage.setItem(PRESET_ONBOARDED_STORAGE_KEY, '1')
+              shouldAutoOpenPresetWizard = true
+            }
+          } catch {
+            // Ignore storage errors
+          }
+        }
         set({
           savedHosts: nextHosts,
           pairingOpen: false,
           connectingHostAddr: host.addrs[0] ?? null,
+          ...(shouldAutoOpenPresetWizard ? { presetWizardOpen: true } : {}),
         })
         triggerHaptic('confirm')
       },
@@ -291,6 +372,9 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     localFeel: initialFeel,
     pairingOpen: false,
     feelSheetOpen: false,
+    aboutSheetOpen: false,
+    presetWizardOpen: false,
+    embeddedAirMouseActive: false,
 
     layoutEditing: false,
     editingTileTarget: null,
@@ -309,6 +393,9 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       const hosts = loadSavedHosts()
       const resolvedTheme = resolveEffectiveTheme(feel.themeMode)
       applyEffectiveThemeToDocument(resolvedTheme)
+      setNativeScreenOrientationMode(feel.screenOrientation)
+      lastVolCaptureActive = null
+      lastVolCaptureMode = null
       set({
         savedHosts: hosts,
         localFeel: feel,
@@ -318,8 +405,79 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       })
       const client = ensureClient()
 
+      if (typeof window !== 'undefined') {
+        window.__axonkeyNativeOnVolumeKey = (key, keyPhase) => {
+          if (keyPhase === 'up') {
+            const held = heldVolKeyButtons.get(key)
+            if (held) {
+              heldVolKeyButtons.delete(key)
+              ensureClient().sendPointerButton(held.button, 'up', held.pressId)
+            }
+            return
+          }
+
+          const state = get()
+          if (!computeShouldCaptureVolumeKeys(state)) return
+          const mode = state.localFeel.volumeKeyMouseMode
+
+          if (mode === 'lr' || mode === 'rl') {
+            if (keyPhase !== 'down') return
+            if (heldVolKeyButtons.has(key)) return
+            const button: PointerButtonName =
+              key === 'up'
+                ? mode === 'lr'
+                  ? 'left'
+                  : 'right'
+                : mode === 'lr'
+                  ? 'right'
+                  : 'left'
+            volPressSeq += 1
+            const pressId = `vol-${button}-${volPressSeq}`
+            heldVolKeyButtons.set(key, { button, pressId })
+            triggerHaptic('tap')
+            ensureClient().sendPointerButton(button, 'down', pressId)
+            return
+          }
+
+          if (mode === 'scroll') {
+            if (keyPhase === 'down') triggerHaptic('tap')
+            const deltaY = key === 'up' ? 2.4 : -2.4
+            ensureClient().sendPointerScroll(0, deltaY)
+          }
+        }
+      }
+
       if (typeof window !== 'undefined' && !listenersBound) {
         listenersBound = true
+
+        const isEditableElement = (el: EventTarget | null): boolean => {
+          if (!el || !(el instanceof HTMLElement)) return false
+          const tag = el.tagName
+          if (tag === 'TEXTAREA' || el.isContentEditable) return true
+          if (tag === 'INPUT') {
+            const inputType = (el as HTMLInputElement).type?.toLowerCase() || 'text'
+            return inputType !== 'range' && inputType !== 'button' && inputType !== 'checkbox'
+          }
+          return false
+        }
+
+        document.addEventListener('focusin', (e) => {
+          const nextFocused = isEditableElement(e.target)
+          if (nextFocused !== textInputFocusedRuntime) {
+            textInputFocusedRuntime = nextFocused
+            syncVolumeKeyCaptureWithStore(get())
+          }
+        })
+
+        document.addEventListener('focusout', () => {
+          setTimeout(() => {
+            const nextFocused = isEditableElement(document.activeElement)
+            if (nextFocused !== textInputFocusedRuntime) {
+              textInputFocusedRuntime = nextFocused
+              syncVolumeKeyCaptureWithStore(get())
+            }
+          }, 0)
+        })
 
         const refreshSystemTheme = (overrideSystemDark?: boolean) => {
           const curMode = get().localFeel.themeMode
@@ -351,15 +509,20 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
         }
 
         const handlePause = () => {
+          appPausedRuntime = true
+          releaseHeldVolumeKeyButtons(singletonClient)
           setNativeGyroClutch(false)
           setNativeGyroConfig('off', get().localFeel.gyroSensitivity)
+          syncVolumeKeyCaptureWithStore(get())
           set({ voiceLevel: 0 })
           client.handleVisibilityHidden()
         }
 
         const handleResume = () => {
+          appPausedRuntime = false
           refreshSystemTheme()
           client.handleVisibilityVisible()
+          syncVolumeKeyCaptureWithStore(get())
           const s = get()
           if (!s.isDemoMode && s.savedHosts.length > 0 && s.phase !== 'active') {
             discoverNativeLanHosts(600)
@@ -606,6 +769,57 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
     setFeelSheetOpen: (open) => set({ feelSheetOpen: open }),
 
+    setAboutSheetOpen: (open) => set({ aboutSheetOpen: open }),
+
+    setPresetWizardOpen: (open) => {
+      if (!open && typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(PRESET_ONBOARDED_STORAGE_KEY, '1')
+        } catch {
+          // Ignore storage issues
+        }
+      }
+      set({ presetWizardOpen: open })
+    },
+
+    setEmbeddedAirMouseZoneActive: (zoneId, active) => {
+      if (active) activeEmbeddedAirMouseZoneIds.add(zoneId)
+      else activeEmbeddedAirMouseZoneIds.delete(zoneId)
+      const nextActive = activeEmbeddedAirMouseZoneIds.size > 0
+      if (get().embeddedAirMouseActive !== nextActive) {
+        set({ embeddedAirMouseActive: nextActive })
+      }
+    },
+
+    applyStarterPreset: (preset, voicePreset) => {
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(PRESET_ONBOARDED_STORAGE_KEY, '1')
+        } catch {
+          // Ignore storage issues
+        }
+      }
+      const nextWorkspace: WorkspaceMode = preset === 'daily-remote' ? 'remote' : 'deck'
+      const previewDeck = buildDemoPresetDeck(preset, voicePreset)
+      const s = get()
+      if (s.phase === 'active') {
+        const reqId = ensureClient().sendApplyPreset(preset, voicePreset)
+        set({
+          workspaceMode: nextWorkspace,
+          layoutEditing: false,
+          presetWizardOpen: false,
+        })
+        return reqId !== null
+      }
+      set({
+        deck: previewDeck,
+        workspaceMode: nextWorkspace,
+        layoutEditing: false,
+        presetWizardOpen: false,
+      })
+      return true
+    },
+
     setLayoutEditing: (editing) => {
       if (editing) {
         setNativeGyroClutch(false)
@@ -677,6 +891,9 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       const nextEffectiveTheme = resolveEffectiveTheme(merged.themeMode)
       if (patch.themeMode !== undefined || get().effectiveTheme !== nextEffectiveTheme) {
         applyEffectiveThemeToDocument(nextEffectiveTheme)
+      }
+      if (patch.screenOrientation !== undefined) {
+        setNativeScreenOrientationMode(merged.screenOrientation)
       }
       saveLocalFeelPreferences(merged)
       setKeepScreenOn(get().phase === 'active' && merged.keepScreenOn)
@@ -764,6 +981,12 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
             tileIds: normalizeDpadSlotIds(z.tileIds).map((id) => (id === tileId ? '' : id)),
           }
         }
+        if (z.kind === 'gesture-pad') {
+          return {
+            ...z,
+            tileIds: normalizeGesturePadSlotIds(z.tileIds).map((id) => (id === tileId ? '' : id)),
+          }
+        }
         return {
           ...z,
           tileIds: z.tileIds.filter((id) => id !== tileId),
@@ -800,6 +1023,17 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
         if (zoneId && z.id === zoneId) {
           if (z.kind === 'dpad-3x3' && slotIndex !== undefined && slotIndex >= 0 && slotIndex < 9) {
             const slots = normalizeDpadSlotIds(z.tileIds)
+            slots[slotIndex] = newTile.id
+            placed = true
+            return { ...z, tileIds: slots }
+          }
+          if (
+            z.kind === 'gesture-pad' &&
+            slotIndex !== undefined &&
+            slotIndex >= 0 &&
+            slotIndex < 6
+          ) {
+            const slots = normalizeGesturePadSlotIds(z.tileIds)
             slots[slotIndex] = newTile.id
             placed = true
             return { ...z, tileIds: slots }
@@ -993,6 +1227,22 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
     getClient: () => ensureClient(),
   }
+})
+
+function syncVolumeKeyCaptureWithStore(state: MobileStoreState): void {
+  const shouldCapture = computeShouldCaptureVolumeKeys(state)
+  const mode = state.localFeel.volumeKeyMouseMode
+  if (shouldCapture === lastVolCaptureActive && mode === lastVolCaptureMode) return
+  if (!shouldCapture || mode !== lastVolCaptureMode) {
+    releaseHeldVolumeKeyButtons(singletonClient)
+  }
+  lastVolCaptureActive = shouldCapture
+  lastVolCaptureMode = mode
+  setNativeVolumeKeyMouseConfig(shouldCapture, mode)
+}
+
+useMobileStore.subscribe((state) => {
+  syncVolumeKeyCaptureWithStore(state)
 })
 
 export function registerPendingTileRequest(requestId: string | null, tileId: string): void {

@@ -1,14 +1,20 @@
 import { useEffect, useState } from 'react'
 import {
   Check,
+  ChevronRight,
+  Hand,
+  Info,
   Monitor,
   MonitorSmartphone,
   Moon,
+  RotateCw,
   SlidersHorizontal,
   Smartphone,
   Sparkles,
   Sun,
   Vibrate,
+  Volume2,
+  Wand2,
   X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
@@ -16,13 +22,21 @@ import {
   useMobileStore,
   type AirMouseFeelMode,
   type PointerTabMode,
+  type ScreenOrientationMode,
   type ThemeMode,
+  type VolumeKeyMouseMode,
 } from '../state/useMobileStore'
-import { getDefaultPhoneName, triggerHaptic } from '../transport/nativeBridge'
+import {
+  getDefaultPhoneName,
+  getNativeAppVersionInfo,
+  triggerHaptic,
+} from '../transport/nativeBridge'
 
 export function LocalFeelSheet() {
   const open = useMobileStore((s) => s.feelSheetOpen)
   const setOpen = useMobileStore((s) => s.setFeelSheetOpen)
+  const setAboutSheetOpen = useMobileStore((s) => s.setAboutSheetOpen)
+  const setPresetWizardOpen = useMobileStore((s) => s.setPresetWizardOpen)
   const deck = useMobileStore((s) => s.deck)
   const localFeel = useMobileStore((s) => s.localFeel)
   const effectiveTheme = useMobileStore((s) => s.effectiveTheme)
@@ -31,6 +45,7 @@ export function LocalFeelSheet() {
   const updateSensitivity = useMobileStore((s) => s.updateSensitivity)
 
   const isLight = effectiveTheme === 'light'
+  const versionInfo = getNativeAppVersionInfo()
 
   const [nameDraft, setNameDraft] = useState(localFeel.deviceName)
   const [nameSaved, setNameSaved] = useState(false)
@@ -56,6 +71,19 @@ export function LocalFeelSheet() {
     { id: 'system', label: '跟随系统', icon: MonitorSmartphone },
     { id: 'light', label: '浅色模式', icon: Sun },
     { id: 'dark', label: '深色模式', icon: Moon },
+  ]
+
+  const orientationOptions: { id: ScreenOrientationMode; label: string }[] = [
+    { id: 'portrait', label: '竖屏手持' },
+    { id: 'landscape', label: '横屏台架' },
+    { id: 'system', label: '自动旋转' },
+  ]
+
+  const volumeKeyOptions: { id: VolumeKeyMouseMode; label: string }[] = [
+    { id: 'off', label: '关闭' },
+    { id: 'lr', label: '音量+左/音量-右' },
+    { id: 'rl', label: '音量+右/音量-左' },
+    { id: 'scroll', label: '滚轮翻页' },
   ]
 
   const pointerTabOptions: { id: PointerTabMode; label: string }[] = [
@@ -88,6 +116,40 @@ export function LocalFeelSheet() {
           </button>
         </div>
 
+        {/* Quick Starter Preset Wizard Entry */}
+        <button
+          type="button"
+          onClick={() => {
+            triggerHaptic('tap')
+            setOpen(false)
+            setPresetWizardOpen(true)
+          }}
+          className={clsx(
+            'tile-surface w-full px-3.5 py-3 rounded-2xl border flex items-center justify-between gap-2 text-left',
+            isLight
+              ? 'bg-blue-600/[0.06] border-blue-500/30'
+              : 'bg-blue-500/12 border-blue-400/30',
+          )}
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span
+              className={clsx(
+                'w-8 h-8 rounded-xl inline-flex items-center justify-center shrink-0',
+                isLight ? 'bg-blue-600 text-white' : 'bg-blue-500/25 text-blue-200',
+              )}
+            >
+              <Wand2 className="w-4 h-4" />
+            </span>
+            <div className="min-w-0">
+              <div className="ak-text-1 text-xs font-bold">预设方案与开箱向导</div>
+              <div className="ak-text-2 text-[11px] truncate">
+                切换日常遥控、AI 编程副屏、演示影音或纯净空白面板
+              </div>
+            </div>
+          </div>
+          <ChevronRight className="w-4 h-4 ak-text-3 shrink-0" />
+        </button>
+
         {/* Theme Switcher: System | Light | Dark */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
@@ -114,13 +176,47 @@ export function LocalFeelSheet() {
                   }}
                   className={clsx(
                     'h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-xs font-semibold transition-all',
-                    active
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'ak-text-2',
+                    active ? 'bg-blue-600 text-white shadow-xs' : 'ak-text-2',
                   )}
                 >
                   <Icon className="w-3.5 h-3.5" />
                   <span>{opt.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Screen Orientation Switcher: Portrait | Landscape | System */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="ak-text-2 inline-flex items-center gap-1.5 font-medium">
+              <RotateCw className="w-3.5 h-3.5" />
+              <span>画面方向</span>
+            </span>
+            <span className="ak-text-3 text-[11px]">横屏自动启用双栏台架工作台</span>
+          </div>
+          <div
+            role="group"
+            aria-label="画面方向切换"
+            className="ak-seg grid grid-cols-3 gap-1.5 p-1 rounded-2xl border"
+          >
+            {orientationOptions.map((opt) => {
+              const active = localFeel.screenOrientation === opt.id
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic('tap')
+                    updateLocalFeel({ screenOrientation: opt.id })
+                  }}
+                  className={clsx(
+                    'h-9 rounded-xl inline-flex items-center justify-center text-xs font-semibold transition-all',
+                    active ? 'bg-blue-600 text-white shadow-xs' : 'ak-text-2',
+                  )}
+                >
+                  {opt.label}
                 </button>
               )
             })}
@@ -180,7 +276,12 @@ export function LocalFeelSheet() {
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="ak-text-1 font-medium">触控板指针灵敏度</span>
-              <span className={clsx('font-mono font-semibold', isLight ? 'text-blue-600' : 'text-blue-300')}>
+              <span
+                className={clsx(
+                  'font-mono font-semibold',
+                  isLight ? 'text-blue-600' : 'text-blue-300',
+                )}
+              >
                 {deck.pointerSensitivity.toFixed(1)}×
               </span>
             </div>
@@ -200,7 +301,12 @@ export function LocalFeelSheet() {
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="ak-text-1 font-medium">双指滚轮灵敏度</span>
-              <span className={clsx('font-mono font-semibold', isLight ? 'text-blue-600' : 'text-blue-300')}>
+              <span
+                className={clsx(
+                  'font-mono font-semibold',
+                  isLight ? 'text-blue-600' : 'text-blue-300',
+                )}
+              >
                 {deck.scrollSensitivity.toFixed(1)}×
               </span>
             </div>
@@ -220,7 +326,12 @@ export function LocalFeelSheet() {
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="ak-text-1 font-medium">体感飞鼠灵敏度</span>
-              <span className={clsx('font-mono font-semibold', isLight ? 'text-blue-600' : 'text-blue-300')}>
+              <span
+                className={clsx(
+                  'font-mono font-semibold',
+                  isLight ? 'text-blue-600' : 'text-blue-300',
+                )}
+              >
                 {localFeel.gyroSensitivity.toFixed(1)}×
               </span>
             </div>
@@ -235,6 +346,42 @@ export function LocalFeelSheet() {
               }
               className="ak-slider w-full"
             />
+          </div>
+        </div>
+
+        {/* Hardware Volume Key Mouse Takeover in Air-Mouse */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="ak-text-2 inline-flex items-center gap-1.5 font-medium">
+              <Volume2 className="w-3.5 h-3.5" />
+              <span>飞鼠实体音量键</span>
+            </span>
+            <span className="ak-text-3 text-[11px]">仅在体感飞鼠前台激活时接管</span>
+          </div>
+          <div
+            role="group"
+            aria-label="飞鼠实体音量键模式"
+            className="ak-seg grid grid-cols-2 gap-1.5 p-1 rounded-2xl border"
+          >
+            {volumeKeyOptions.map((opt) => {
+              const active = localFeel.volumeKeyMouseMode === opt.id
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic('tap')
+                    updateLocalFeel({ volumeKeyMouseMode: opt.id })
+                  }}
+                  className={clsx(
+                    'h-8 rounded-xl text-xs font-semibold transition-colors',
+                    active ? 'bg-blue-600 text-white' : 'ak-text-2',
+                  )}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
           </div>
         </div>
 
@@ -285,8 +432,41 @@ export function LocalFeelSheet() {
           </div>
         </div>
 
-        {/* Toggles: Haptics & Keep Screen On */}
+        {/* Toggles: 3-Finger System Gestures, Haptics & Keep Screen On */}
         <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic('tap')
+              updateLocalFeel({
+                threeFingerSystemGestures: !localFeel.threeFingerSystemGestures,
+              })
+            }}
+            className="ak-well w-full px-3.5 py-3 rounded-2xl border flex items-center justify-between"
+          >
+            <div className="flex items-center gap-2.5">
+              <Hand className="w-4 h-4 ak-text-2" />
+              <div className="text-left">
+                <div className="ak-text-1 text-xs font-semibold">三指系统手势</div>
+                <div className="ak-text-2 text-[11px]">
+                  触控板三指上滑任务视图、下滑桌面、左右切虚拟桌面、轻点中键
+                </div>
+              </div>
+            </div>
+            <span
+              className={clsx(
+                'w-10 h-6 rounded-full p-0.5 transition-colors inline-flex items-center shrink-0',
+                localFeel.threeFingerSystemGestures
+                  ? 'bg-blue-600 justify-end'
+                  : isLight
+                    ? 'bg-slate-300 justify-start'
+                    : 'bg-zinc-700 justify-start',
+              )}
+            >
+              <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={() => {
@@ -305,7 +485,7 @@ export function LocalFeelSheet() {
             </div>
             <span
               className={clsx(
-                'w-10 h-6 rounded-full p-0.5 transition-colors inline-flex items-center',
+                'w-10 h-6 rounded-full p-0.5 transition-colors inline-flex items-center shrink-0',
                 localFeel.hapticsEnabled
                   ? 'bg-blue-600 justify-end'
                   : isLight
@@ -334,7 +514,7 @@ export function LocalFeelSheet() {
             </div>
             <span
               className={clsx(
-                'w-10 h-6 rounded-full p-0.5 transition-colors inline-flex items-center',
+                'w-10 h-6 rounded-full p-0.5 transition-colors inline-flex items-center shrink-0',
                 localFeel.keepScreenOn
                   ? 'bg-blue-600 justify-end'
                   : isLight
@@ -346,6 +526,34 @@ export function LocalFeelSheet() {
             </span>
           </button>
         </div>
+
+        {/* About & In-App Update Row */}
+        <button
+          type="button"
+          onClick={() => {
+            triggerHaptic('tap')
+            setOpen(false)
+            setAboutSheetOpen(true)
+          }}
+          aria-label="关于与版本更新"
+          className="tile-surface ak-well w-full px-3.5 py-3 rounded-2xl border flex items-center justify-between gap-2 text-left"
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Info className="w-4 h-4 ak-text-2 shrink-0" />
+            <div className="min-w-0">
+              <div className="ak-text-1 text-xs font-semibold">关于 Axonkey Mobile 与检查更新</div>
+              <div className="ak-text-2 text-[11px] truncate">
+                GitHub 在线检查更新 · 开源仓库直达
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="ak-code-chip ak-text-2 px-2 py-0.5 rounded-md border text-[11px] font-mono">
+              v{versionInfo.versionName}
+            </span>
+            <ChevronRight className="w-4 h-4 ak-text-3" />
+          </div>
+        </button>
 
         {/* Clear Separation of Responsibility Notice */}
         <div

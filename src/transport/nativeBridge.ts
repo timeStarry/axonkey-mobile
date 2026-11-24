@@ -1,4 +1,53 @@
-import type { DiscoveredLanHost, GyroMode, PairingOfferQr } from '../protocol/types'
+import type {
+  AirMouseHandedness,
+  DiscoveredLanHost,
+  GyroMode,
+  PairingOfferQr,
+  ScreenOrientationMode,
+  VolumeKeyMouseMode,
+} from '../protocol/types'
+
+export type { AirMouseHandedness, ScreenOrientationMode, VolumeKeyMouseMode }
+
+export interface AppVersionInfo {
+  versionName: string
+  versionCode: number
+  packageName: string
+}
+
+export type GithubReleaseCheckResult =
+  | {
+      ok: true
+      tagName: string
+      version: string
+      title: string
+      notes: string
+      publishedAt: string
+      htmlUrl: string
+      apkUrl: string
+      apkName: string
+      apkSizeBytes: number
+      sha256: string
+    }
+  | {
+      ok: false
+      code: 'no_release' | 'network_error' | string
+      error: string
+    }
+
+export interface ApkUpdateProgressEvent {
+  phase:
+    | 'downloading'
+    | 'verifying'
+    | 'ready'
+    | 'installing'
+    | 'permission_required'
+    | 'error'
+  percent: number
+  downloaded: number
+  total: number
+  message?: string
+}
 
 export interface SavedHostProfile {
   hostId: string
@@ -30,6 +79,10 @@ export interface LocalFeelPreferences {
   gyroSensitivity: number
   preferredPointerTab: PointerTabMode
   airMouseFeel: AirMouseFeelMode
+  airMouseHandedness: AirMouseHandedness
+  volumeKeyMouseMode: VolumeKeyMouseMode
+  screenOrientation: ScreenOrientationMode
+  threeFingerSystemGestures: boolean
   hapticsEnabled: boolean
   keepScreenOn: boolean
   preferredDockMode: 'voice' | 'text'
@@ -69,6 +122,16 @@ export interface AxonkeyAndroidBridge {
   stopVoiceStream?(streamId: number, requestId: string): void
   cancelVoiceStream?(streamId: number, reason: string): void
   discoverLanHosts?(timeoutMs: number): void
+
+  // v4 ergonomics, orientation, hardware volume-key mouse, click stabilizer & in-app APK updater
+  setVolumeKeyMouseConfig?(active: boolean, mode: string): void
+  notifyPointerClickPulse?(): void
+  setScreenOrientationMode?(mode: string): void
+  getAppVersionInfo?(): string
+  openExternalUrl?(url: string): boolean
+  checkGithubRelease?(repoSlug: string): void
+  downloadAndInstallApk?(url: string, expectedSha256: string, version: string): void
+  installDownloadedApk?(): boolean
 }
 
 declare global {
@@ -84,6 +147,12 @@ declare global {
     __axonkeyNativeOnGyroState?: (state: string) => void
     __axonkeyNativeOnHostsDiscovered?: (jsonArray: string) => void
     __axonkeyNativeOnSystemDarkChanged?: (isDark: boolean) => void
+    __axonkeyNativeOnVolumeKey?: (
+      key: 'up' | 'down',
+      phase: 'down' | 'up' | 'repeat',
+    ) => void
+    __axonkeyNativeOnUpdateRelease?: (jsonString: string) => void
+    __axonkeyNativeOnUpdateProgress?: (jsonString: string) => void
   }
 }
 
@@ -111,6 +180,10 @@ export const DEFAULT_LOCAL_FEEL: LocalFeelPreferences = {
   gyroSensitivity: 1.2,
   preferredPointerTab: 'trackpad',
   airMouseFeel: 'relative',
+  airMouseHandedness: 'right',
+  volumeKeyMouseMode: 'off',
+  screenOrientation: 'portrait',
+  threeFingerSystemGestures: true,
   hapticsEnabled: true,
   keepScreenOn: true,
   preferredDockMode: 'voice',
@@ -162,6 +235,27 @@ export function loadLocalFeelPreferences(): LocalFeelPreferences {
           : DEFAULT_LOCAL_FEEL.gyroSensitivity,
       preferredPointerTab,
       airMouseFeel,
+      airMouseHandedness:
+        parsed.airMouseHandedness === 'left' || parsed.airMouseHandedness === 'right'
+          ? parsed.airMouseHandedness
+          : DEFAULT_LOCAL_FEEL.airMouseHandedness,
+      volumeKeyMouseMode:
+        parsed.volumeKeyMouseMode === 'off' ||
+        parsed.volumeKeyMouseMode === 'lr' ||
+        parsed.volumeKeyMouseMode === 'rl' ||
+        parsed.volumeKeyMouseMode === 'scroll'
+          ? parsed.volumeKeyMouseMode
+          : DEFAULT_LOCAL_FEEL.volumeKeyMouseMode,
+      screenOrientation:
+        parsed.screenOrientation === 'portrait' ||
+        parsed.screenOrientation === 'landscape' ||
+        parsed.screenOrientation === 'system'
+          ? parsed.screenOrientation
+          : DEFAULT_LOCAL_FEEL.screenOrientation,
+      threeFingerSystemGestures:
+        typeof parsed.threeFingerSystemGestures === 'boolean'
+          ? parsed.threeFingerSystemGestures
+          : DEFAULT_LOCAL_FEEL.threeFingerSystemGestures,
       hapticsEnabled:
         typeof parsed.hapticsEnabled === 'boolean'
           ? parsed.hapticsEnabled
@@ -357,6 +451,162 @@ export function recenterNativeCursor(): boolean {
   }
   recenterNativeGyro()
   return false
+}
+
+export function setNativeVolumeKeyMouseConfig(
+  active: boolean,
+  mode: VolumeKeyMouseMode,
+): void {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.AxonkeyNative?.setVolumeKeyMouseConfig === 'function'
+  ) {
+    try {
+      window.AxonkeyNative.setVolumeKeyMouseConfig(active, mode)
+    } catch {
+      // Ignore bridge errors in partial mocks
+    }
+  }
+}
+
+export function notifyNativePointerClickPulse(): void {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.AxonkeyNative?.notifyPointerClickPulse === 'function'
+  ) {
+    try {
+      window.AxonkeyNative.notifyPointerClickPulse()
+    } catch {
+      // Ignore bridge errors in partial mocks
+    }
+  }
+}
+
+export function setNativeScreenOrientationMode(mode: ScreenOrientationMode): void {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.AxonkeyNative?.setScreenOrientationMode === 'function'
+  ) {
+    try {
+      window.AxonkeyNative.setScreenOrientationMode(mode)
+    } catch {
+      // Ignore bridge errors in partial mocks
+    }
+  }
+}
+
+export function getNativeAppVersionInfo(): AppVersionInfo {
+  const fallback: AppVersionInfo = {
+    versionName: '0.2.0',
+    versionCode: 2,
+    packageName: 'com.axonkey.mobile',
+  }
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.AxonkeyNative?.getAppVersionInfo === 'function'
+  ) {
+    try {
+      const raw = window.AxonkeyNative.getAppVersionInfo()
+      if (!raw) return fallback
+      const parsed = JSON.parse(raw) as Partial<AppVersionInfo>
+      return {
+        versionName:
+          typeof parsed.versionName === 'string' && parsed.versionName.trim()
+            ? parsed.versionName.trim()
+            : fallback.versionName,
+        versionCode:
+          typeof parsed.versionCode === 'number' && Number.isFinite(parsed.versionCode)
+            ? parsed.versionCode
+            : fallback.versionCode,
+        packageName:
+          typeof parsed.packageName === 'string' && parsed.packageName.trim()
+            ? parsed.packageName.trim()
+            : fallback.packageName,
+      }
+    } catch {
+      return fallback
+    }
+  }
+  return fallback
+}
+
+export function openNativeExternalUrl(url: string): boolean {
+  if (!url || !url.startsWith('https://')) return false
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.AxonkeyNative?.openExternalUrl === 'function'
+  ) {
+    try {
+      return Boolean(window.AxonkeyNative.openExternalUrl(url))
+    } catch {
+      return false
+    }
+  }
+  if (typeof window !== 'undefined' && typeof window.open === 'function') {
+    window.open(url, '_blank', 'noopener,noreferrer')
+    return true
+  }
+  return false
+}
+
+export function checkNativeGithubRelease(repoSlug: string): boolean {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.AxonkeyNative?.checkGithubRelease === 'function'
+  ) {
+    window.AxonkeyNative.checkGithubRelease(repoSlug)
+    return true
+  }
+  return false
+}
+
+export function downloadAndInstallNativeApk(
+  url: string,
+  expectedSha256: string,
+  version: string,
+): boolean {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.AxonkeyNative?.downloadAndInstallApk === 'function'
+  ) {
+    window.AxonkeyNative.downloadAndInstallApk(url, expectedSha256, version)
+    return true
+  }
+  return false
+}
+
+export function installDownloadedNativeApk(): boolean {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.AxonkeyNative?.installDownloadedApk === 'function'
+  ) {
+    try {
+      return Boolean(window.AxonkeyNative.installDownloadedApk())
+    } catch {
+      return false
+    }
+  }
+  return false
+}
+
+export function compareSemver(currentVer: string, latestVer: string): number {
+  const norm = (v: string) =>
+    v
+      .trim()
+      .replace(/^v/i, '')
+      .split('-')[0]
+      .split('.')
+      .map((part) => Number.parseInt(part, 10) || 0)
+  const a = norm(currentVer)
+  const b = norm(latestVer)
+  const len = Math.max(a.length, b.length, 3)
+  for (let i = 0; i < len; i += 1) {
+    const ai = a[i] ?? 0
+    const bi = b[i] ?? 0
+    if (ai < bi) return -1
+    if (ai > bi) return 1
+  }
+  return 0
 }
 
 export function startNativeVoiceStream(requestId: string): number {

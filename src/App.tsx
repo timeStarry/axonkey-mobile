@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Gamepad2,
   LayoutGrid,
@@ -11,17 +11,24 @@ import {
   Wifi,
 } from 'lucide-react'
 import { clsx } from 'clsx'
+import { AboutUpdateSheet } from './components/AboutUpdateSheet'
 import { LayoutEditorBar } from './components/LayoutEditorBar'
 import { LocalFeelSheet } from './components/LocalFeelSheet'
 import { PageManagerSheet } from './components/PageManagerSheet'
 import { PageZoneRenderer } from './components/PageZoneRenderer'
 import { PairingSheet } from './components/PairingSheet'
+import { PresetWizardSheet } from './components/PresetWizardSheet'
 import { TileStyleSheet } from './components/TileStyleSheet'
 import { TrackpadSurface } from './components/TrackpadSurface'
 import { VoiceTextDock } from './components/VoiceTextDock'
 import { useMobileStore, type WorkspaceMode } from './state/useMobileStore'
 import { DEFAULT_DEMO_DECK } from './transport/defaultDeck'
 import { triggerHaptic } from './transport/nativeBridge'
+
+function readViewportSize(): { width: number; height: number } {
+  if (typeof window === 'undefined') return { width: 390, height: 844 }
+  return { width: window.innerWidth, height: window.innerHeight }
+}
 
 export function App() {
   const init = useMobileStore((s) => s.init)
@@ -35,6 +42,7 @@ export function App() {
   const workspaceMode = useMobileStore((s) => s.workspaceMode)
   const layoutEditing = useMobileStore((s) => s.layoutEditing)
   const effectiveTheme = useMobileStore((s) => s.effectiveTheme)
+  const screenOrientation = useMobileStore((s) => s.localFeel.screenOrientation)
   const conflictBanner = useMobileStore((s) => s.conflictBanner)
   const errorToast = useMobileStore((s) => s.errorToast)
 
@@ -49,10 +57,29 @@ export function App() {
   const clearError = useMobileStore((s) => s.clearError)
 
   const isLight = effectiveTheme === 'light'
+  const [viewport, setViewport] = useState(readViewportSize)
 
   useEffect(() => {
     init()
   }, [init])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const handleResize = () => {
+      setViewport(readViewportSize())
+    }
+    window.addEventListener('resize', handleResize)
+    window.addEventListener('orientationchange', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('orientationchange', handleResize)
+    }
+  }, [])
+
+  const isWideViewport = viewport.width > viewport.height
+  const isSplitLandscape =
+    (isWideViewport && viewport.height < 580) ||
+    (screenOrientation === 'landscape' && isWideViewport)
 
   // Resolve Remote pages vs Custom/Grid/Mixed pages harmoniously
   const remotePages = deck.pages.filter((p) => p.layout === 'remote' || p.id === 'classic-remote')
@@ -100,6 +127,306 @@ export function App() {
     } else if (mode === 'deck' && activeDeckPage) {
       setActivePage(activeDeckPage.id)
     }
+  }
+
+  const renderMainStage = () => (
+    <>
+      {conflictBanner && (
+        <div
+          className={clsx(
+            'mx-3 mt-2 px-3 py-1.5 rounded-xl border flex items-center justify-between gap-2 text-xs shrink-0',
+            isLight
+              ? 'bg-amber-500/15 border-amber-500/35 text-amber-900'
+              : 'bg-amber-500/15 border-amber-400/30 text-amber-200',
+          )}
+        >
+          <span className="truncate">{conflictBanner}</span>
+          <button type="button" onClick={dismissConflict} className="shrink-0 underline">
+            知道了
+          </button>
+        </div>
+      )}
+      {errorToast && (
+        <div
+          className={clsx(
+            'mx-3 mt-2 px-3 py-1.5 rounded-xl border flex items-center justify-between gap-2 text-xs shrink-0',
+            isLight
+              ? 'bg-rose-500/12 border-rose-500/30 text-rose-800'
+              : 'bg-rose-500/15 border-rose-400/30 text-rose-200',
+          )}
+        >
+          <span className="truncate">{errorToast}</span>
+          <button type="button" onClick={clearError} className="shrink-0 underline">
+            关闭
+          </button>
+        </div>
+      )}
+
+      {layoutEditing && <LayoutEditorBar currentPage={editingCurrentPage} />}
+
+      <main className="flex-1 min-h-0 flex flex-col px-3 py-2.5 overflow-hidden">
+        {layoutEditing ? (
+          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
+            <PageZoneRenderer page={editingCurrentPage} />
+          </div>
+        ) : (
+          <>
+            {workspaceMode === 'remote' && (
+              <div className="flex-1 min-h-0 flex flex-col gap-2">
+                {remotePages.length > 1 && (
+                  <div className="flex items-center gap-1.5 overflow-x-auto shrink-0 no-scrollbar">
+                    {remotePages.map((p) => {
+                      const active = p.id === remotePage.id
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            triggerHaptic('tap')
+                            setActivePage(p.id)
+                          }}
+                          className={clsx(
+                            'h-7 px-3 rounded-full text-xs font-semibold shrink-0 transition-colors border',
+                            active
+                              ? isLight
+                                ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                                : 'bg-zinc-100 text-zinc-950 border-white'
+                              : 'ak-elevated ak-text-2',
+                          )}
+                        >
+                          {p.name}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
+                  <PageZoneRenderer page={remotePage} />
+                </div>
+              </div>
+            )}
+
+            {workspaceMode === 'deck' && (
+              <div className="flex-1 min-h-0 flex flex-col gap-2.5">
+                <div className="flex items-center justify-between gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar min-w-0 flex-1">
+                    {deckSelectablePages.map((p) => {
+                      const active = p.id === activeDeckPage?.id
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            triggerHaptic('tap')
+                            setActivePage(p.id)
+                          }}
+                          className={clsx(
+                            'h-7 px-3 rounded-full text-xs font-semibold shrink-0 transition-colors border',
+                            active
+                              ? isLight
+                                ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                                : 'bg-zinc-100 text-zinc-950 border-white'
+                              : 'ak-elevated ak-text-2',
+                          )}
+                        >
+                          {p.name}
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic('tap')
+                      setLayoutEditing(true)
+                      setPageManagerOpen(true)
+                    }}
+                    aria-label="新建自定义页面"
+                    className="ak-pill ak-text-2 h-7 px-2.5 rounded-full border text-[11px] font-semibold inline-flex items-center gap-0.5 shrink-0"
+                  >
+                    <Plus className={clsx('w-3 h-3', isLight ? 'text-blue-600' : 'text-blue-400')} />
+                    <span>新页面</span>
+                  </button>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
+                  {activeDeckPage && <PageZoneRenderer page={activeDeckPage} />}
+                </div>
+              </div>
+            )}
+
+            {workspaceMode === 'pointer' && (
+              <div className="flex-1 min-h-0">
+                <TrackpadSurface />
+              </div>
+            )}
+          </>
+        )}
+      </main>
+    </>
+  )
+
+  const renderSheets = () => (
+    <>
+      <PairingSheet />
+      <LocalFeelSheet />
+      <TileStyleSheet />
+      <PageManagerSheet currentPage={editingCurrentPage} />
+      <AboutUpdateSheet />
+      <PresetWizardSheet />
+    </>
+  )
+
+  // Responsive Split Landscape Ergonomic Layout (Left Control Rail w-[208px] + Right Full-Height Stage)
+  if (isSplitLandscape) {
+    return (
+      <div
+        data-testid="split-landscape-shell"
+        className="ak-canvas h-full w-full flex flex-row overflow-hidden"
+      >
+        <aside className="ak-chrome w-[208px] shrink-0 h-full border-r p-2.5 flex flex-col justify-between gap-2 overflow-y-auto no-scrollbar">
+          <div className="space-y-2">
+            {/* Compact Host Status Badge */}
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic('tap')
+                if (phase !== 'active' && savedHosts.length > 0) {
+                  discoverAndReconnect(650)
+                } else {
+                  setPairingOpen(true)
+                }
+              }}
+              className="ak-pill w-full flex items-center justify-between gap-1.5 h-8 px-2.5 rounded-xl border text-left"
+            >
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span
+                  className={clsx(
+                    'w-2 h-2 rounded-full shrink-0',
+                    phase === 'active'
+                      ? isOnlineReal
+                        ? 'bg-emerald-500'
+                        : 'bg-cyan-500'
+                      : 'bg-amber-500 animate-pulse',
+                  )}
+                />
+                <span className="ak-text-1 text-xs font-semibold truncate">
+                  {phase === 'active'
+                    ? isDemoMode
+                      ? '模拟体验'
+                      : hostName
+                    : isConnecting
+                      ? '重连中…'
+                      : '未连接'}
+                </span>
+              </div>
+              {phase === 'active' && !isDemoMode && (contextBadge || context.profileName) && (
+                <span className="ak-text-3 text-[10px] truncate max-w-[64px]">
+                  {contextBadge ?? context.profileName}
+                </span>
+              )}
+            </button>
+
+            {/* Compact Utility Row: 布局 / 配对 / 设置 */}
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic('tap')
+                  setLayoutEditing(!layoutEditing)
+                }}
+                aria-label="自定义布局"
+                aria-pressed={layoutEditing}
+                className={clsx(
+                  'tile-surface h-8 rounded-xl border inline-flex items-center justify-center gap-1 text-[11px] font-semibold',
+                  layoutEditing
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'ak-elevated ak-text-2',
+                )}
+              >
+                <PencilRuler className="w-3.5 h-3.5" />
+                <span>布局</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic('tap')
+                  setPairingOpen(true)
+                }}
+                aria-label="连接与配对"
+                className="tile-surface ak-elevated ak-text-2 h-8 rounded-xl border inline-flex items-center justify-center"
+              >
+                {savedHosts.length > 0 ? (
+                  <Wifi className="w-3.5 h-3.5" />
+                ) : (
+                  <QrCode className="w-3.5 h-3.5" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic('tap')
+                  setFeelSheetOpen(true)
+                }}
+                aria-label="本地手感设置"
+                className="tile-surface ak-elevated ak-text-2 h-8 rounded-xl border inline-flex items-center justify-center"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Primary Workspace Buttons */}
+            <nav aria-label="主工作区切换" className="ak-seg p-1 rounded-2xl border space-y-1">
+              {navItems.map((item) => {
+                const Icon = item.icon
+                const active = workspaceMode === item.id
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      if (workspaceMode === item.id && !layoutEditing) return
+                      handlePrimaryTabSelect(item.id)
+                    }}
+                    className={clsx(
+                      'w-full h-9 px-2.5 rounded-xl inline-flex items-center gap-2 text-xs font-semibold transition-all touch-none',
+                      active
+                        ? clsx(
+                            'tile-surface ak-active-tab border shadow-xs',
+                            isLight ? 'border-blue-500/35' : 'border-blue-400/30',
+                          )
+                        : 'ak-text-2',
+                    )}
+                  >
+                    <Icon
+                      className={clsx(
+                        'w-4 h-4 shrink-0',
+                        active ? (isLight ? 'text-blue-600' : 'text-blue-400') : 'ak-text-3',
+                      )}
+                    />
+                    <span className="truncate">{item.label}</span>
+                  </button>
+                )
+              })}
+            </nav>
+          </div>
+
+          {/* Dedicated Thumb-Zone Voice & Text Dock */}
+          <VoiceTextDock compactLandscape />
+        </aside>
+
+        {/* Right Full-Height Uncramped Stage */}
+        <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
+          {renderMainStage()}
+        </div>
+
+        {renderSheets()}
+      </div>
+    )
   }
 
   return (
@@ -240,143 +567,7 @@ export function App() {
         </div>
       </header>
 
-      {/* Non-Intrusive Toast Banners */}
-      {conflictBanner && (
-        <div
-          className={clsx(
-            'mx-3 mt-2 px-3 py-1.5 rounded-xl border flex items-center justify-between gap-2 text-xs shrink-0',
-            isLight
-              ? 'bg-amber-500/15 border-amber-500/35 text-amber-900'
-              : 'bg-amber-500/15 border-amber-400/30 text-amber-200',
-          )}
-        >
-          <span className="truncate">{conflictBanner}</span>
-          <button type="button" onClick={dismissConflict} className="shrink-0 underline">
-            知道了
-          </button>
-        </div>
-      )}
-      {errorToast && (
-        <div
-          className={clsx(
-            'mx-3 mt-2 px-3 py-1.5 rounded-xl border flex items-center justify-between gap-2 text-xs shrink-0',
-            isLight
-              ? 'bg-rose-500/12 border-rose-500/30 text-rose-800'
-              : 'bg-rose-500/15 border-rose-400/30 text-rose-200',
-          )}
-        >
-          <span className="truncate">{errorToast}</span>
-          <button type="button" onClick={clearError} className="shrink-0 underline">
-            关闭
-          </button>
-        </div>
-      )}
-
-      {/* Floating In-Place Layout Editor Toolbar */}
-      {layoutEditing && <LayoutEditorBar currentPage={editingCurrentPage} />}
-
-      {/* Main Controller Surface */}
-      <main className="flex-1 min-h-0 flex flex-col px-3 py-2.5 overflow-hidden">
-        {layoutEditing ? (
-          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
-            <PageZoneRenderer page={editingCurrentPage} />
-          </div>
-        ) : (
-          <>
-            {workspaceMode === 'remote' && (
-              <div className="flex-1 min-h-0 flex flex-col gap-2">
-                {remotePages.length > 1 && (
-                  <div className="flex items-center gap-1.5 overflow-x-auto shrink-0 no-scrollbar">
-                    {remotePages.map((p) => {
-                      const active = p.id === remotePage.id
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => {
-                            triggerHaptic('tap')
-                            setActivePage(p.id)
-                          }}
-                          className={clsx(
-                            'h-7 px-3 rounded-full text-xs font-semibold shrink-0 transition-colors border',
-                            active
-                              ? isLight
-                                ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                                : 'bg-zinc-100 text-zinc-950 border-white'
-                              : 'ak-elevated ak-text-2',
-                          )}
-                        >
-                          {p.name}
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-
-                <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
-                  <PageZoneRenderer page={remotePage} />
-                </div>
-              </div>
-            )}
-
-            {workspaceMode === 'deck' && (
-              <div className="flex-1 min-h-0 flex flex-col gap-2.5">
-                <div className="flex items-center justify-between gap-1.5 shrink-0">
-                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar min-w-0 flex-1">
-                    {deckSelectablePages.map((p) => {
-                      const active = p.id === activeDeckPage?.id
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => {
-                            triggerHaptic('tap')
-                            setActivePage(p.id)
-                          }}
-                          className={clsx(
-                            'h-7 px-3 rounded-full text-xs font-semibold shrink-0 transition-colors border',
-                            active
-                              ? isLight
-                                ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                                : 'bg-zinc-100 text-zinc-950 border-white'
-                              : 'ak-elevated ak-text-2',
-                          )}
-                        >
-                          {p.name}
-                        </button>
-                      )
-                    })}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      triggerHaptic('tap')
-                      setLayoutEditing(true)
-                      setPageManagerOpen(true)
-                    }}
-                    aria-label="新建自定义页面"
-                    className="ak-pill ak-text-2 h-7 px-2.5 rounded-full border text-[11px] font-semibold inline-flex items-center gap-0.5 shrink-0"
-                  >
-                    <Plus className={clsx('w-3 h-3', isLight ? 'text-blue-600' : 'text-blue-400')} />
-                    <span>新页面</span>
-                  </button>
-                </div>
-
-                <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
-                  {activeDeckPage && <PageZoneRenderer page={activeDeckPage} />}
-                </div>
-              </div>
-            )}
-
-            {workspaceMode === 'pointer' && (
-              <div className="flex-1 min-h-0">
-                <TrackpadSurface />
-              </div>
-            )}
-          </>
-        )}
-      </main>
+      {renderMainStage()}
 
       {/* Ergonomic Thumb-Zone Primary Mode Segmented Bar (Right Above Voice/Text Dock) */}
       <nav aria-label="主工作区切换" className="ak-dock shrink-0 px-3 pt-2 pb-1 border-t">
@@ -419,10 +610,7 @@ export function App() {
       <VoiceTextDock />
 
       {/* Bottom Sheets */}
-      <PairingSheet />
-      <LocalFeelSheet />
-      <TileStyleSheet />
-      <PageManagerSheet currentPage={editingCurrentPage} />
+      {renderSheets()}
     </div>
   )
 }

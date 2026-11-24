@@ -216,4 +216,88 @@ describe('TrackpadController (v2 rAF coalescing & edge ordering)', () => {
     expect(onButton).toHaveBeenNthCalledWith(1, 'right', 'down', expect.any(String))
     expect(onButton).toHaveBeenNthCalledWith(2, 'right', 'up', expect.any(String))
   })
+
+  it('recognizes 3-finger tap and 4-directional 3-finger OS touchpad swipes (>36px) cleanly without liftoff scroll/click jitter', () => {
+    let clock = 100
+    const raf = createManualScheduler()
+    const onMotion = vi.fn()
+    const onScroll = vi.fn()
+    const onButton = vi.fn()
+    const onSystemGesture = vi.fn()
+
+    const ctrl = new TrackpadController(
+      { onMotion, onScroll, onButton, onSystemGesture },
+      () => clock,
+      raf.scheduler,
+    )
+
+    // 1. 3-finger tap -> 'three_finger_tap' (no right-click!)
+    ctrl.onPointerDown(1, 100, 100)
+    ctrl.onPointerDown(2, 130, 100)
+    ctrl.onPointerDown(3, 160, 100)
+    clock = 160
+    ctrl.onPointerUp(1)
+    ctrl.onPointerUp(2)
+    ctrl.onPointerUp(3)
+
+    expect(onSystemGesture).toHaveBeenCalledTimes(1)
+    expect(onSystemGesture).toHaveBeenLastCalledWith('three_finger_tap')
+    expect(onButton).not.toHaveBeenCalled()
+
+    // 2. 3-finger swipe UP (>36px) -> 'three_finger_up', fires once & suppresses liftoff scroll
+    onSystemGesture.mockClear()
+    clock = 300
+    ctrl.onPointerDown(1, 100, 200)
+    ctrl.onPointerDown(2, 130, 200)
+    ctrl.onPointerDown(3, 160, 200)
+    clock = 340
+    ctrl.onPointerMove(1, 100, 150)
+    ctrl.onPointerMove(2, 130, 150)
+    ctrl.onPointerMove(3, 160, 150) // centroid dy = -50 -> > 36px
+    // Continued drag and staggered liftoff must not re-fire or scroll
+    ctrl.onPointerMove(1, 100, 130)
+    ctrl.onPointerUp(3)
+    ctrl.onPointerMove(1, 100, 120)
+    ctrl.onPointerUp(2)
+    ctrl.onPointerUp(1)
+    raf.runNextFrame()
+
+    expect(onSystemGesture).toHaveBeenCalledTimes(1)
+    expect(onSystemGesture).toHaveBeenLastCalledWith('three_finger_up')
+    expect(onMotion).not.toHaveBeenCalled()
+    expect(onScroll).not.toHaveBeenCalled()
+    expect(onButton).not.toHaveBeenCalled()
+
+    // 3. 3-finger swipe DOWN, LEFT, RIGHT
+    const swipe3 = (dx: number, dy: number) => {
+      clock += 100
+      ctrl.onPointerDown(1, 200, 200)
+      ctrl.onPointerDown(2, 220, 200)
+      ctrl.onPointerDown(3, 240, 200)
+      clock += 30
+      ctrl.onPointerMove(1, 200 + dx, 200 + dy)
+      ctrl.onPointerMove(2, 220 + dx, 200 + dy)
+      ctrl.onPointerMove(3, 240 + dx, 200 + dy)
+      ctrl.onPointerUp(1)
+      ctrl.onPointerUp(2)
+      ctrl.onPointerUp(3)
+    }
+
+    onSystemGesture.mockClear()
+    swipe3(0, 48)
+    expect(onSystemGesture).toHaveBeenLastCalledWith('three_finger_down')
+
+    swipe3(-52, 4)
+    expect(onSystemGesture).toHaveBeenLastCalledWith('three_finger_left')
+
+    swipe3(55, -5)
+    expect(onSystemGesture).toHaveBeenLastCalledWith('three_finger_right')
+    expect(onSystemGesture).toHaveBeenCalledTimes(3)
+
+    // 4. Disabling 3-finger gestures suppresses onSystemGesture
+    onSystemGesture.mockClear()
+    ctrl.setThreeFingerGesturesEnabled(false)
+    swipe3(0, -50)
+    expect(onSystemGesture).not.toHaveBeenCalled()
+  })
 })

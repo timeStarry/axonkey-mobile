@@ -1,9 +1,14 @@
-import type { PointerButtonName, PointerButtonPhase } from '../protocol/types'
+import type {
+  PointerButtonName,
+  PointerButtonPhase,
+  SystemTouchpadGesture,
+} from '../protocol/types'
 
 export interface TrackpadCallbacks {
   onMotion: (dx: number, dy: number) => void
   onScroll: (x: number, y: number) => void
   onButton: (button: PointerButtonName, phase: PointerButtonPhase, pressId: string) => void
+  onSystemGesture?: (gesture: SystemTouchpadGesture) => void
 }
 
 export interface TrackpadScheduler {
@@ -23,6 +28,7 @@ const TAP_MAX_DISTANCE = 8
 const TAP_MAX_DURATION_MS = 220
 const DOUBLE_TAP_DRAG_WINDOW_MS = 260
 const DOUBLE_TAP_MAX_DIST = 26
+const THREE_FINGER_SWIPE_THRESHOLD = 36
 
 const defaultScheduler: TrackpadScheduler = {
   requestFrame: (cb) =>
@@ -60,6 +66,9 @@ export class TrackpadController {
   private gestureMoved = false
   private gestureStartMs = 0
   private twoFingerCentroid: { x: number; y: number } | null = null
+  private threeFingerEnabled = true
+  private threeFingerStartCentroid: { x: number; y: number } | null = null
+  private threeFingerSwipeFired = false
 
   // 1-finger double-tap-and-slide drag state
   private lastSingleTapUpMs = 0
@@ -77,12 +86,22 @@ export class TrackpadController {
     this.scheduler = scheduler ?? defaultScheduler
   }
 
+  setThreeFingerGesturesEnabled(enabled: boolean): void {
+    this.threeFingerEnabled = enabled
+  }
+
+  private isThreeFingerActive(): boolean {
+    return Boolean(this.callbacks.onSystemGesture) && this.threeFingerEnabled
+  }
+
   onPointerDown(pointerId: number, x: number, y: number): void {
     const ts = this.now()
     if (this.contacts.size === 0) {
       this.gestureMaxFingers = 0
       this.gestureMoved = false
       this.gestureStartMs = ts
+      this.threeFingerStartCentroid = null
+      this.threeFingerSwipeFired = false
       this.eligibleForTapDrag =
         this.lastSingleTapUpMs > 0 &&
         ts - this.lastSingleTapUpMs <= DOUBLE_TAP_DRAG_WINDOW_MS &&
@@ -99,9 +118,21 @@ export class TrackpadController {
     this.gestureMaxFingers = Math.max(this.gestureMaxFingers, this.contacts.size)
 
     // Reset baseline when transitioning 1 -> 2 fingers so cursor never jumps.
-    if (this.contacts.size === 2) {
+    if (this.contacts.size === 2 && this.gestureMaxFingers === 2) {
       this.flush()
       this.twoFingerCentroid = this.computeCentroid()
+    } else if (this.contacts.size === 3 && this.isThreeFingerActive()) {
+      // Transitioning into 3-finger OS gesture: discard tiny pre-landing scroll/motion
+      this.cancelScheduledFlush()
+      this.pendingDx = 0
+      this.pendingDy = 0
+      this.pendingScrollX = 0
+      this.pendingScrollY = 0
+      this.twoFingerCentroid = null
+      this.threeFingerStartCentroid = this.computeCentroid()
+      this.threeFingerSwipeFired = false
+      this.gestureMoved = false
+      this.gestureStartMs = ts
     }
   }
 
@@ -114,6 +145,38 @@ export class TrackpadController {
     contact.x = x
     contact.y = y
 
+    if (this.gestureMaxFingers >= 3 && this.isThreeFingerActive()) {
+      if (this.contacts.size >= 3 && !this.threeFingerSwipeFired) {
+        const cur = this.computeCentroid()
+        if (!this.threeFingerStartCentroid) {
+          this.threeFingerStartCentroid = cur
+          return
+        }
+        if (cur) {
+          const gdx = cur.x - this.threeFingerStartCentroid.x
+          const gdy = cur.y - this.threeFingerStartCentroid.y
+          const dist = Math.hypot(gdx, gdy)
+          if (dist > TAP_MAX_DISTANCE) {
+            this.gestureMoved = true
+          }
+          if (dist > THREE_FINGER_SWIPE_THRESHOLD) {
+            this.threeFingerSwipeFired = true
+            this.gestureMoved = true
+            const gesture: SystemTouchpadGesture =
+              Math.abs(gdx) >= Math.abs(gdy)
+                ? gdx > 0
+                  ? 'three_finger_right'
+                  : 'three_finger_left'
+                : gdy > 0
+                  ? 'three_finger_down'
+                  : 'three_finger_up'
+            this.callbacks.onSystemGesture?.(gesture)
+          }
+        }
+      }
+      return
+    }
+
     const totalDist = Math.hypot(x - contact.startX, y - contact.startY)
     if (totalDist > TAP_MAX_DISTANCE) {
       this.gestureMoved = true
@@ -125,7 +188,7 @@ export class TrackpadController {
       }
     }
 
-    if (this.contacts.size === 1) {
+    if (this.contacts.size === 1 && this.gestureMaxFingers === 1) {
       if (dx !== 0 || dy !== 0) {
         this.pendingDx += dx
         this.pendingDy += dy
@@ -166,6 +229,13 @@ export class TrackpadController {
         this.tapDragActive = false
         this.eligibleForTapDrag = false
         this.setButton('left', false)
+      } else if (this.gestureMaxFingers >= 3 && this.isThreeFingerActive()) {
+        const ts = this.now()
+        const elapsed = ts - this.gestureStartMs
+        if (!this.threeFingerSwipeFired && !this.gestureMoved && elapsed <= TAP_MAX_DURATION_MS) {
+          this.callbacks.onSystemGesture?.('three_finger_tap')
+        }
+        this.lastSingleTapUpMs = 0
       } else {
         const ts = this.now()
         const elapsed = ts - this.gestureStartMs
@@ -193,6 +263,8 @@ export class TrackpadController {
       }
       this.gestureMaxFingers = 0
       this.gestureMoved = false
+      this.threeFingerStartCentroid = null
+      this.threeFingerSwipeFired = false
       this.eligibleForTapDrag = false
     }
   }
@@ -202,6 +274,8 @@ export class TrackpadController {
     this.contacts.delete(pointerId)
     this.cancelScheduledFlush()
     this.twoFingerCentroid = null
+    this.threeFingerStartCentroid = null
+    this.threeFingerSwipeFired = false
     // Discard unsent residual delta on cancel (never inject cancelled movement).
     this.pendingDx = 0
     this.pendingDy = 0
@@ -261,6 +335,8 @@ export class TrackpadController {
     this.contacts.clear()
     this.cancelScheduledFlush()
     this.twoFingerCentroid = null
+    this.threeFingerStartCentroid = null
+    this.threeFingerSwipeFired = false
     this.pendingDx = 0
     this.pendingDy = 0
     this.pendingScrollX = 0

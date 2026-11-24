@@ -19,9 +19,11 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import {
+  GESTURE_PAD_SLOT_SPECS,
   clampColumns,
   formatBentoSpan,
   normalizeDpadSlotIds,
+  normalizeGesturePadSlotIds,
   normalizePageZones,
   packBentoTiles,
   reorderTileIds,
@@ -29,6 +31,7 @@ import {
 import { TileGestureController } from '../input/tileGesture'
 import { TrackpadController } from '../input/trackpad'
 import type {
+  EmbeddedPadHeight,
   EmbeddedPointerMode,
   MobileDeckPage,
   MobileDeckZone,
@@ -38,6 +41,7 @@ import type {
 } from '../protocol/types'
 import { registerPendingTileRequest, useMobileStore } from '../state/useMobileStore'
 import {
+  notifyNativePointerClickPulse,
   recenterNativeCursor,
   setNativeGyroClutch,
   setNativeGyroConfig,
@@ -135,9 +139,16 @@ function EmbeddedPointerPad({ pageId, zone, editMode, isLight }: EmbeddedPointer
   const phase = useMobileStore((s) => s.phase)
   const isDemoMode = useMobileStore((s) => s.isDemoMode)
   const gyroSensitivity = useMobileStore((s) => s.localFeel.gyroSensitivity)
+  const threeFingerSystemGestures = useMobileStore(
+    (s) => s.localFeel.threeFingerSystemGestures,
+  )
   const updateZone = useMobileStore((s) => s.updateZone)
+  const setEmbeddedAirMouseZoneActive = useMobileStore((s) => s.setEmbeddedAirMouseZoneActive)
 
   const mode: EmbeddedPointerMode = zone.pointerMode === 'relative' ? 'relative' : 'trackpad'
+  const padHeight: EmbeddedPadHeight = zone.padHeight ?? 'standard'
+  const showButtons = zone.showButtons !== false
+
   const [dragLocked, setDragLocked] = useState(false)
   const [activeTouches, setActiveTouches] = useState(0)
   const [clutchHeld, setClutchHeld] = useState(false)
@@ -161,8 +172,25 @@ function EmbeddedPointerPad({ pageId, zone, editMode, isLight }: EmbeddedPointer
         if (btnPhase === 'down') triggerHaptic('tap')
         getClient().sendPointerButton(button, btnPhase, pressId)
       },
+      onSystemGesture: (gesture) => {
+        if (!useMobileStore.getState().localFeel.threeFingerSystemGestures) return
+        triggerHaptic('confirm')
+        getClient().sendTouchpadGesture(gesture)
+      },
     })
   }
+
+  useEffect(() => {
+    controllerRef.current?.setThreeFingerGesturesEnabled(threeFingerSystemGestures)
+  }, [threeFingerSystemGestures])
+
+  useEffect(() => {
+    const active = !editMode && mode === 'relative'
+    setEmbeddedAirMouseZoneActive(zone.id, active)
+    return () => {
+      setEmbeddedAirMouseZoneActive(zone.id, false)
+    }
+  }, [zone.id, editMode, mode, setEmbeddedAirMouseZoneActive])
 
   useEffect(() => {
     const canStream = phase === 'active' && !isDemoMode && !editMode
@@ -230,6 +258,7 @@ function EmbeddedPointerPad({ pageId, zone, editMode, isLight }: EmbeddedPointer
     }
     if (down) {
       if (heldManualButtons.current.has(button)) return
+      notifyNativePointerClickPulse()
       triggerHaptic('tap')
       const pressId = nextEmbeddedPressId(button)
       heldManualButtons.current.set(button, pressId)
@@ -242,11 +271,18 @@ function EmbeddedPointerPad({ pageId, zone, editMode, isLight }: EmbeddedPointer
     }
   }
 
+  const padHeightCls =
+    padHeight === 'compact'
+      ? 'min-h-[108px]'
+      : padHeight === 'tall'
+        ? 'min-h-[212px]'
+        : 'min-h-[144px]'
+
   if (editMode) {
     return (
       <div
         className={clsx(
-          'min-h-[168px] rounded-[24px] border border-dashed p-4 flex flex-col items-center justify-center gap-2 text-center',
+          'min-h-[152px] rounded-[24px] border border-dashed p-4 flex flex-col items-center justify-center gap-2 text-center',
           isLight
             ? 'border-blue-500/40 bg-blue-600/[0.04]'
             : 'border-blue-400/35 bg-[#0f1420]/90',
@@ -267,7 +303,9 @@ function EmbeddedPointerPad({ pageId, zone, editMode, isLight }: EmbeddedPointer
           )}
         </span>
         <div className="ak-text-1 text-xs font-semibold">
-          内嵌{mode === 'trackpad' ? '多点触控板' : '体感飞鼠离合区'}（混排区块）
+          内嵌{mode === 'trackpad' ? '多点触控板' : '体感飞鼠离合区'}（
+          {padHeight === 'compact' ? '紧凑' : padHeight === 'tall' ? '加高' : '标准'} ·{' '}
+          {showButtons ? '含实体键' : '纯触控面'}）
         </div>
         <div className="ak-text-2 text-[11px]">
           完成编辑后可直接在同屏上方操控鼠标 + 下方盲操快捷键
@@ -277,10 +315,13 @@ function EmbeddedPointerPad({ pageId, zone, editMode, isLight }: EmbeddedPointer
   }
 
   return (
-    <div className="flex flex-col gap-2 min-h-[198px] select-none">
+    <div className="flex flex-col gap-2 select-none">
       {mode === 'trackpad' ? (
         <div
-          className="trackpad-dots ak-border relative flex-1 min-h-[144px] rounded-[22px] border touch-none select-none overflow-hidden"
+          className={clsx(
+            'trackpad-dots ak-border relative flex-1 rounded-[22px] border touch-none select-none overflow-hidden',
+            padHeightCls,
+          )}
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture?.(e.pointerId)
             setActiveTouches((n) => n + 1)
@@ -370,7 +411,7 @@ function EmbeddedPointerPad({ pageId, zone, editMode, isLight }: EmbeddedPointer
           </div>
         </div>
       ) : (
-        <div className="relative flex-1 min-h-[144px] flex flex-col">
+        <div className={clsx('relative flex-1 flex flex-col', padHeightCls)}>
           <div className="ak-elevated absolute top-2.5 left-2.5 z-10 inline-flex items-center p-0.5 rounded-full border opacity-95">
             <button
               type="button"
@@ -440,78 +481,360 @@ function EmbeddedPointerPad({ pageId, zone, editMode, isLight }: EmbeddedPointer
         </div>
       )}
 
-      {/* Compact Left / Scroll / Right strip */}
-      <div className="grid grid-cols-12 gap-2 h-[44px] shrink-0">
-        <button
-          type="button"
-          className={clsx(
-            'tile-surface ak-elevated col-span-5 rounded-2xl border text-xs font-semibold touch-none',
-            pressedButtons.left && 'tile-pressed border-blue-500/50',
-          )}
-          onPointerDown={(e) => {
-            e.currentTarget.setPointerCapture?.(e.pointerId)
-            handlePhysicalButton('left', true)
-          }}
-          onPointerUp={() => handlePhysicalButton('left', false)}
-          onPointerCancel={() => handlePhysicalButton('left', false)}
-        >
-          左键
-        </button>
+      {/* Compact Left / Scroll / Right strip (optional via showButtons) */}
+      {showButtons && (
+        <div className="grid grid-cols-12 gap-2 h-[44px] shrink-0">
+          <button
+            type="button"
+            className={clsx(
+              'tile-surface ak-elevated col-span-5 rounded-2xl border text-xs font-semibold touch-none',
+              pressedButtons.left && 'tile-pressed border-blue-500/50',
+            )}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture?.(e.pointerId)
+              handlePhysicalButton('left', true)
+            }}
+            onPointerUp={() => handlePhysicalButton('left', false)}
+            onPointerCancel={() => handlePhysicalButton('left', false)}
+          >
+            左键
+          </button>
 
-        <div
-          role="button"
-          tabIndex={0}
-          aria-label="上下滑动滚轮"
-          className={clsx(
-            'tile-surface ak-elevated-alt col-span-2 rounded-2xl border flex items-center justify-center text-[11px] font-medium touch-none',
-            pressedButtons.scroll && 'tile-pressed border-blue-500/50',
-          )}
-          onPointerDown={(e) => {
-            e.currentTarget.setPointerCapture?.(e.pointerId)
-            scrollClutchYRef.current = e.clientY
-            scrollResidualRef.current = 0
-            setPressedButtons((p) => ({ ...p, scroll: true }))
-            triggerHaptic('tap')
-          }}
-          onPointerMove={(e) => {
-            if (scrollClutchYRef.current === null) return
-            const dy = e.clientY - scrollClutchYRef.current
-            scrollClutchYRef.current = e.clientY
-            scrollResidualRef.current += dy * 0.25
-            if (Math.abs(scrollResidualRef.current) >= 0.35) {
-              getClient().sendPointerScroll(0, scrollResidualRef.current)
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label="上下滑动滚轮"
+            className={clsx(
+              'tile-surface ak-elevated-alt col-span-2 rounded-2xl border flex items-center justify-center text-[11px] font-medium touch-none',
+              pressedButtons.scroll && 'tile-pressed border-blue-500/50',
+            )}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture?.(e.pointerId)
+              scrollClutchYRef.current = e.clientY
               scrollResidualRef.current = 0
-            }
-          }}
-          onPointerUp={() => {
-            scrollClutchYRef.current = null
-            scrollResidualRef.current = 0
-            setPressedButtons((p) => ({ ...p, scroll: false }))
-          }}
-          onPointerCancel={() => {
-            scrollClutchYRef.current = null
-            scrollResidualRef.current = 0
-            setPressedButtons((p) => ({ ...p, scroll: false }))
-          }}
-        >
-          滚轮
+              setPressedButtons((p) => ({ ...p, scroll: true }))
+              triggerHaptic('tap')
+            }}
+            onPointerMove={(e) => {
+              if (scrollClutchYRef.current === null) return
+              const dy = e.clientY - scrollClutchYRef.current
+              scrollClutchYRef.current = e.clientY
+              scrollResidualRef.current += dy * 0.25
+              if (Math.abs(scrollResidualRef.current) >= 0.35) {
+                getClient().sendPointerScroll(0, scrollResidualRef.current)
+                scrollResidualRef.current = 0
+              }
+            }}
+            onPointerUp={() => {
+              scrollClutchYRef.current = null
+              scrollResidualRef.current = 0
+              setPressedButtons((p) => ({ ...p, scroll: false }))
+            }}
+            onPointerCancel={() => {
+              scrollClutchYRef.current = null
+              scrollResidualRef.current = 0
+              setPressedButtons((p) => ({ ...p, scroll: false }))
+            }}
+          >
+            滚轮
+          </div>
+
+          <button
+            type="button"
+            className={clsx(
+              'tile-surface ak-elevated col-span-5 rounded-2xl border text-xs font-semibold touch-none',
+              pressedButtons.right && 'tile-pressed border-blue-500/50',
+            )}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture?.(e.pointerId)
+              handlePhysicalButton('right', true)
+            }}
+            onPointerUp={() => handlePhysicalButton('right', false)}
+            onPointerCancel={() => handlePhysicalButton('right', false)}
+          >
+            右键
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const GESTURE_PAD_SWIPE_PX = 32
+const GESTURE_PAD_TAP_MAX_PX = 12
+
+interface GestureTriggerPadProps {
+  pageId: string
+  zone: MobileDeckZone
+  byId: Map<string, MobileTile>
+  editMode: boolean
+  isLight: boolean
+  doubleClickWindowMs: number
+}
+
+function GestureTriggerPad({
+  pageId,
+  zone,
+  byId,
+  editMode,
+  isLight,
+  doubleClickWindowMs,
+}: GestureTriggerPadProps) {
+  const getClient = useMobileStore((s) => s.getClient)
+  const openTileEditor = useMobileStore((s) => s.openTileEditor)
+  const addTileToPage = useMobileStore((s) => s.addTileToPage)
+  const tileFeedback = useMobileStore((s) => s.tileFeedback)
+
+  const slots = useMemo(() => normalizeGesturePadSlotIds(zone.tileIds), [zone.tileIds])
+  const padHeight: EmbeddedPadHeight = zone.padHeight ?? 'standard'
+  const [flashSlot, setFlashSlot] = useState<number | null>(null)
+
+  const gestureRef = useRef<{
+    pointerId: number | null
+    startX: number
+    startY: number
+    maxDist: number
+    swiped: boolean
+  }>({
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    maxDist: 0,
+    swiped: false,
+  })
+  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const waitingDoubleRef = useRef(false)
+
+  useEffect(() => {
+    return () => {
+      if (tapTimerRef.current) clearTimeout(tapTimerRef.current)
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+    }
+  }, [])
+
+  const triggerSlot = (slotIdx: number) => {
+    const tileId = slots[slotIdx]
+    const tile = tileId ? byId.get(tileId) : undefined
+    setFlashSlot(slotIdx)
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+    flashTimerRef.current = setTimeout(() => {
+      setFlashSlot(null)
+      flashTimerRef.current = null
+    }, 320)
+
+    if (!tile) {
+      triggerHaptic('tap')
+      return
+    }
+    triggerHaptic(slotIdx === 5 ? 'confirm' : resolveTileHaptic(tile, 'tap'))
+    const reqId = getClient().sendTileActivate(tile.id, 'tap')
+    registerPendingTileRequest(reqId, tile.id)
+  }
+
+  if (editMode) {
+    return (
+      <div className="chassis-well p-2.5 rounded-[24px] border space-y-2">
+        <div className="ak-text-2 text-[11px] px-1">
+          点击任意方向/轻点槽位可改名与换色，在电脑端绑定对应手势动作：
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {GESTURE_PAD_SLOT_SPECS.map((spec) => {
+            const tileId = slots[spec.index]
+            const tile = tileId ? byId.get(tileId) : undefined
+            const st = getAccentStyle(tile?.accent ?? spec.accent, isLight)
+            const Icon = getTileIcon(tile?.icon ?? spec.icon)
+            return (
+              <button
+                key={spec.key}
+                type="button"
+                data-gesture-slot-index={spec.index}
+                onClick={() => {
+                  triggerHaptic('tap')
+                  if (tile) {
+                    openTileEditor(pageId, zone.id, tile.id)
+                  } else {
+                    const created = addTileToPage(pageId, zone.id, spec.index)
+                    if (created) openTileEditor(pageId, zone.id, created.id)
+                  }
+                }}
+                className={clsx(
+                  'tile-surface p-2.5 rounded-2xl border border-dashed flex items-center gap-2 text-left',
+                  tile ? st.card : 'ak-pill ak-text-3',
+                )}
+              >
+                <span
+                  className={clsx(
+                    'w-8 h-8 rounded-xl inline-flex items-center justify-center shrink-0',
+                    tile ? clsx(st.iconBg, st.iconText) : 'ak-elevated ak-text-3',
+                  )}
+                >
+                  <Icon className="w-4 h-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1">
+                    <span className="ak-code-chip px-1.5 py-px rounded border text-[9.5px] font-mono font-bold shrink-0">
+                      {spec.badge}
+                    </span>
+                    <span className="ak-text-1 text-xs font-semibold truncate">
+                      {tile?.label ?? spec.label}
+                    </span>
+                  </div>
+                  <div className="ak-text-2 text-[10px] font-mono truncate mt-0.5">
+                    {tile?.actionSummary ?? tile?.subtitle ?? '点击编辑样式'}
+                  </div>
+                </div>
+                <Pencil className="w-3 h-3 ak-text-3 shrink-0" />
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  const slotSummary = (idx: number) => {
+    const id = slots[idx]
+    const t = id ? byId.get(id) : undefined
+    if (!t) return '未设置'
+    return t.actionSummary ?? t.label
+  }
+
+  const isSlotActive = (idx: number) => {
+    if (flashSlot === idx) return true
+    const id = slots[idx]
+    if (!id) return false
+    const fb = tileFeedback[id]
+    return Boolean(fb && Date.now() - fb.at < 500 && fb.status === 'ok')
+  }
+
+  const heightCls =
+    padHeight === 'compact'
+      ? 'min-h-[156px]'
+      : padHeight === 'tall'
+        ? 'min-h-[248px]'
+        : 'min-h-[192px]'
+
+  const pillCls = (idx: number) =>
+    clsx(
+      'px-2.5 py-1 rounded-full border text-[11px] font-semibold inline-flex items-center gap-1 transition-all max-w-[140px]',
+      isSlotActive(idx)
+        ? isLight
+          ? 'bg-blue-600 text-white border-blue-600 scale-105 shadow-xs'
+          : 'bg-blue-500/30 border-blue-400 text-blue-100 scale-105 shadow-[0_0_14px_rgba(59,130,246,0.35)]'
+        : 'ak-elevated ak-text-2 opacity-95',
+    )
+
+  return (
+    <div
+      role="application"
+      aria-label="手势触发垫"
+      data-testid="gesture-pad-surface"
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture?.(e.pointerId)
+        gestureRef.current = {
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          maxDist: 0,
+          swiped: false,
+        }
+      }}
+      onPointerMove={(e) => {
+        const g = gestureRef.current
+        if (g.pointerId !== e.pointerId || g.swiped) return
+        const dx = e.clientX - g.startX
+        const dy = e.clientY - g.startY
+        const dist = Math.hypot(dx, dy)
+        g.maxDist = Math.max(g.maxDist, dist)
+        if (dist > GESTURE_PAD_SWIPE_PX) {
+          g.swiped = true
+          if (tapTimerRef.current) {
+            clearTimeout(tapTimerRef.current)
+            tapTimerRef.current = null
+          }
+          waitingDoubleRef.current = false
+          const slotIdx =
+            Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 3 : 2) : dy > 0 ? 1 : 0
+          triggerSlot(slotIdx)
+        }
+      }}
+      onPointerUp={(e) => {
+        const g = gestureRef.current
+        if (g.pointerId !== e.pointerId) return
+        g.pointerId = null
+        if (g.swiped || g.maxDist > GESTURE_PAD_TAP_MAX_PX) return
+
+        const hasDoubleTile = Boolean(slots[5] && byId.has(slots[5]))
+        if (!hasDoubleTile) {
+          triggerSlot(4)
+          return
+        }
+
+        if (waitingDoubleRef.current) {
+          if (tapTimerRef.current) {
+            clearTimeout(tapTimerRef.current)
+            tapTimerRef.current = null
+          }
+          waitingDoubleRef.current = false
+          triggerSlot(5)
+          return
+        }
+
+        waitingDoubleRef.current = true
+        const windowMs = Math.min(240, Math.max(150, doubleClickWindowMs || 220))
+        tapTimerRef.current = setTimeout(() => {
+          tapTimerRef.current = null
+          waitingDoubleRef.current = false
+          triggerSlot(4)
+        }, windowMs)
+      }}
+      onPointerCancel={() => {
+        gestureRef.current.pointerId = null
+        gestureRef.current.swiped = false
+      }}
+      className={clsx(
+        'chassis-well relative rounded-[26px] border p-3 flex flex-col items-center justify-between touch-none select-none overflow-hidden',
+        heightCls,
+      )}
+    >
+      {/* Compass Top: Up */}
+      <div className={pillCls(0)}>
+        <span className="font-mono font-bold text-blue-400">↑</span>
+        <span className="truncate">{slotSummary(0)}</span>
+      </div>
+
+      {/* Compass Middle Row: Left | Center Tap/Double | Right */}
+      <div className="w-full flex items-center justify-between gap-2 my-auto">
+        <div className={pillCls(2)}>
+          <span className="font-mono font-bold text-blue-400">←</span>
+          <span className="truncate">{slotSummary(2)}</span>
         </div>
 
-        <button
-          type="button"
-          className={clsx(
-            'tile-surface ak-elevated col-span-5 rounded-2xl border text-xs font-semibold touch-none',
-            pressedButtons.right && 'tile-pressed border-blue-500/50',
-          )}
-          onPointerDown={(e) => {
-            e.currentTarget.setPointerCapture?.(e.pointerId)
-            handlePhysicalButton('right', true)
-          }}
-          onPointerUp={() => handlePhysicalButton('right', false)}
-          onPointerCancel={() => handlePhysicalButton('right', false)}
-        >
-          右键
-        </button>
+        <div className="flex flex-col items-center gap-1 text-center px-2">
+          <div className="flex items-center gap-1.5 flex-wrap justify-center">
+            <span className={pillCls(4)}>
+              <span className="font-mono text-[10px] opacity-80">单击</span>
+              <span className="truncate">{slotSummary(4)}</span>
+            </span>
+            <span className={pillCls(5)}>
+              <span className="font-mono text-[10px] opacity-80">双击</span>
+              <span className="truncate">{slotSummary(5)}</span>
+            </span>
+          </div>
+          <span className="ak-text-3 text-[10px]">盲滑四向 / 轻点触发快捷动作</span>
+        </div>
+
+        <div className={pillCls(3)}>
+          <span className="truncate">{slotSummary(3)}</span>
+          <span className="font-mono font-bold text-blue-400">→</span>
+        </div>
+      </div>
+
+      {/* Compass Bottom: Down */}
+      <div className={pillCls(1)}>
+        <span className="font-mono font-bold text-blue-400">↓</span>
+        <span className="truncate">{slotSummary(1)}</span>
       </div>
     </div>
   )
@@ -769,7 +1092,9 @@ export function PageZoneRenderer({ page }: PageZoneRendererProps) {
             ? 'Bento 自由网格'
             : zone.kind === 'dpad-3x3'
               ? '3×3 导航方向盘'
-              : '内嵌触控 / 飞鼠'
+              : zone.kind === 'gesture-pad'
+                ? '手势触发垫'
+                : '内嵌触控 / 飞鼠'
 
         return (
           <section
@@ -811,28 +1136,106 @@ export function PageZoneRenderer({ page }: PageZoneRendererProps) {
                   )}
 
                   {zone.kind === 'pointer-pad' && (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <div className="ak-seg inline-flex items-center p-0.5 rounded-lg border">
+                        {(
+                          [
+                            { id: 'trackpad', label: '触控板' },
+                            { id: 'relative', label: '体感飞鼠' },
+                          ] as const
+                        ).map((opt) => {
+                          const activeMode = (zone.pointerMode ?? 'trackpad') === opt.id
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => {
+                                triggerHaptic('tap')
+                                updateZone(page.id, zone.id, { pointerMode: opt.id })
+                              }}
+                              className={clsx(
+                                'px-2 py-0.5 rounded-md text-[10.5px] font-semibold transition-colors',
+                                activeMode ? 'bg-blue-600 text-white' : 'ak-text-2',
+                              )}
+                            >
+                              {opt.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      <div className="ak-seg inline-flex items-center p-0.5 rounded-lg border">
+                        {(
+                          [
+                            { id: 'compact', label: '紧凑' },
+                            { id: 'standard', label: '标准' },
+                            { id: 'tall', label: '加高' },
+                          ] as const
+                        ).map((hOpt) => {
+                          const activeH = (zone.padHeight ?? 'standard') === hOpt.id
+                          return (
+                            <button
+                              key={hOpt.id}
+                              type="button"
+                              onClick={() => {
+                                triggerHaptic('tap')
+                                updateZone(page.id, zone.id, { padHeight: hOpt.id })
+                              }}
+                              className={clsx(
+                                'px-1.5 py-0.5 rounded-md text-[10.5px] font-semibold transition-colors',
+                                activeH ? 'bg-blue-600 text-white' : 'ak-text-2',
+                              )}
+                            >
+                              {hOpt.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          triggerHaptic('tap')
+                          updateZone(page.id, zone.id, {
+                            showButtons: zone.showButtons === false,
+                          })
+                        }}
+                        className={clsx(
+                          'px-2 py-0.5 rounded-lg border text-[10.5px] font-semibold transition-colors',
+                          zone.showButtons !== false
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'ak-elevated ak-text-2',
+                        )}
+                      >
+                        实体键
+                      </button>
+                    </div>
+                  )}
+
+                  {zone.kind === 'gesture-pad' && (
                     <div className="ak-seg inline-flex items-center p-0.5 rounded-lg border">
                       {(
                         [
-                          { id: 'trackpad', label: '触控板' },
-                          { id: 'relative', label: '体感飞鼠' },
+                          { id: 'compact', label: '紧凑' },
+                          { id: 'standard', label: '标准' },
+                          { id: 'tall', label: '加高' },
                         ] as const
-                      ).map((opt) => {
-                        const activeMode = (zone.pointerMode ?? 'trackpad') === opt.id
+                      ).map((hOpt) => {
+                        const activeH = (zone.padHeight ?? 'standard') === hOpt.id
                         return (
                           <button
-                            key={opt.id}
+                            key={hOpt.id}
                             type="button"
                             onClick={() => {
                               triggerHaptic('tap')
-                              updateZone(page.id, zone.id, { pointerMode: opt.id })
+                              updateZone(page.id, zone.id, { padHeight: hOpt.id })
                             }}
                             className={clsx(
-                              'px-2 py-0.5 rounded-md text-[10.5px] font-semibold transition-colors',
-                              activeMode ? 'bg-blue-600 text-white' : 'ak-text-2',
+                              'px-1.5 py-0.5 rounded-md text-[10.5px] font-semibold transition-colors',
+                              activeH ? 'bg-blue-600 text-white' : 'ak-text-2',
                             )}
                           >
-                            {opt.label}
+                            {hOpt.label}
                           </button>
                         )
                       })}
@@ -1380,6 +1783,18 @@ export function PageZoneRenderer({ page }: PageZoneRendererProps) {
                 zone={zone}
                 editMode={editMode}
                 isLight={isLight}
+              />
+            )}
+
+            {/* Zone Body: 4. Non-Cursor Blind-Swipe Gesture Trigger Pad */}
+            {zone.kind === 'gesture-pad' && (
+              <GestureTriggerPad
+                pageId={page.id}
+                zone={zone}
+                byId={byId}
+                editMode={editMode}
+                isLight={isLight}
+                doubleClickWindowMs={deck.doubleClickWindowMs}
               />
             )}
           </section>

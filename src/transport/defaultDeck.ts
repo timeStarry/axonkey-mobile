@@ -1,4 +1,26 @@
-import type { DeckSnapshot } from '../protocol/types'
+import type {
+  DeckSnapshot,
+  StarterPresetId,
+  VoicePresetKind,
+} from '../protocol/types'
+
+export function resolveVoicePresetSummary(
+  preset: StarterPresetId,
+  voicePreset?: VoicePresetKind,
+): string | null {
+  const effective: VoicePresetKind =
+    voicePreset ?? (preset === 'blank-canvas' ? 'pure-mic' : 'doubao-alt')
+  switch (effective) {
+    case 'doubao-alt':
+      return 'Alt'
+    case 'system-win-h':
+      return 'Win+H'
+    case 'ctrl-win':
+      return 'Ctrl+Win'
+    case 'pure-mic':
+      return null
+  }
+}
 
 export const DEFAULT_DEMO_DECK: DeckSnapshot = {
   version: 1,
@@ -291,4 +313,245 @@ export const DEFAULT_DEMO_DECK: DeckSnapshot = {
       ],
     },
   ],
+}
+
+export function buildDemoPresetDeck(
+  preset: StarterPresetId,
+  voicePreset?: VoicePresetKind,
+): DeckSnapshot {
+  const voiceBindingSummary = resolveVoicePresetSummary(preset, voicePreset)
+
+  if (preset === 'daily-remote') {
+    const classicRemote = structuredClone(DEFAULT_DEMO_DECK.pages[0])
+    const mediaQuickPage = {
+      id: 'daily-quick',
+      name: '日常影音浏览',
+      layout: 'grid' as const,
+      columns: 3 as const,
+      tiles: [
+        {
+          id: 'daily.play_pause',
+          label: '播放 / 暂停',
+          actionSummary: '播放/暂停',
+          icon: 'play',
+          accent: 'violet' as const,
+          colSpan: 2 as const,
+          rowSpan: 1 as const,
+          mode: 'gesture' as const,
+        },
+        {
+          id: 'daily.fullscreen',
+          label: '全屏',
+          actionSummary: 'F11',
+          icon: 'layout',
+          accent: 'emerald' as const,
+          colSpan: 1 as const,
+          rowSpan: 1 as const,
+          mode: 'gesture' as const,
+        },
+        {
+          id: 'daily.prev',
+          label: '上一曲',
+          actionSummary: '上一曲',
+          icon: 'skip-back',
+          accent: 'slate' as const,
+          colSpan: 1 as const,
+          rowSpan: 1 as const,
+          mode: 'gesture' as const,
+        },
+        {
+          id: 'daily.next',
+          label: '下一曲',
+          actionSummary: '下一曲',
+          icon: 'skip-forward',
+          accent: 'slate' as const,
+          colSpan: 1 as const,
+          rowSpan: 1 as const,
+          mode: 'gesture' as const,
+        },
+        {
+          id: 'daily.refresh',
+          label: '刷新网页',
+          actionSummary: 'Ctrl+R',
+          icon: 'refresh',
+          accent: 'blue' as const,
+          colSpan: 1 as const,
+          rowSpan: 1 as const,
+          mode: 'gesture' as const,
+        },
+      ],
+    }
+    return {
+      ...structuredClone(DEFAULT_DEMO_DECK),
+      activePageId: classicRemote.id,
+      voiceBindingSummary,
+      pages: [classicRemote, mediaQuickPage],
+    }
+  }
+
+  if (preset === 'vibe-coding') {
+    const vibePage = structuredClone(DEFAULT_DEMO_DECK.pages[1])
+    const classicRemote = structuredClone(DEFAULT_DEMO_DECK.pages[0])
+    return {
+      ...structuredClone(DEFAULT_DEMO_DECK),
+      activePageId: vibePage.id,
+      voiceBindingSummary,
+      pages: [vibePage, classicRemote],
+    }
+  }
+
+  if (preset === 'presentation-media') {
+    const pptPage = {
+      id: 'ppt-stage',
+      name: '演示与影音',
+      layout: 'grid' as const,
+      columns: 2 as const,
+      tiles: [
+        {
+          id: 'ppt.next',
+          label: '下一页',
+          actionSummary: 'PageDown',
+          icon: 'arrow-right',
+          accent: 'blue' as const,
+          colSpan: 2 as const,
+          rowSpan: 2 as const,
+          mode: 'gesture' as const,
+        },
+        {
+          id: 'ppt.prev',
+          label: '上一页',
+          actionSummary: 'PageUp',
+          icon: 'arrow-left',
+          accent: 'slate' as const,
+          colSpan: 1 as const,
+          rowSpan: 1 as const,
+          mode: 'gesture' as const,
+        },
+        {
+          id: 'ppt.start',
+          label: '全屏放映',
+          actionSummary: 'F5',
+          icon: 'play',
+          accent: 'emerald' as const,
+          colSpan: 1 as const,
+          rowSpan: 1 as const,
+          mode: 'gesture' as const,
+        },
+        {
+          id: 'ppt.black',
+          label: '黑屏休场',
+          actionSummary: 'B',
+          icon: 'esc',
+          accent: 'amber' as const,
+          colSpan: 1 as const,
+          rowSpan: 1 as const,
+          mode: 'gesture' as const,
+        },
+        {
+          id: 'ppt.play_pause',
+          label: '播放/暂停',
+          actionSummary: 'MediaPlayPause',
+          icon: 'pause',
+          accent: 'violet' as const,
+          colSpan: 1 as const,
+          rowSpan: 1 as const,
+          mode: 'gesture' as const,
+        },
+        {
+          id: 'ppt.mute',
+          label: '静音切换',
+          actionSummary: 'VolumeMute',
+          icon: 'volume-mute',
+          accent: 'rose' as const,
+          colSpan: 2 as const,
+          rowSpan: 1 as const,
+          mode: 'gesture' as const,
+        },
+      ],
+    }
+    const mixedTouchPage = {
+      id: 'ppt-mixed-pad',
+      name: '演讲触控台',
+      layout: 'grid' as const,
+      columns: 2 as const,
+      tiles: [
+        {
+          id: 'ppt.mix.prev',
+          label: '上一页',
+          actionSummary: 'PageUp',
+          icon: 'arrow-left',
+          accent: 'slate' as const,
+          colSpan: 1 as const,
+          rowSpan: 1 as const,
+          mode: 'gesture' as const,
+        },
+        {
+          id: 'ppt.mix.next',
+          label: '下一页',
+          actionSummary: 'PageDown',
+          icon: 'arrow-right',
+          accent: 'blue' as const,
+          colSpan: 1 as const,
+          rowSpan: 1 as const,
+          mode: 'gesture' as const,
+        },
+      ],
+      zones: [
+        {
+          id: 'ppt-mixed-pad-zone',
+          kind: 'pointer-pad' as const,
+          pointerMode: 'trackpad' as const,
+          padHeight: 'standard' as const,
+          showButtons: true,
+          tileIds: [],
+        },
+        {
+          id: 'ppt-mixed-bento',
+          kind: 'bento-grid' as const,
+          columns: 2 as const,
+          tileIds: ['ppt.mix.prev', 'ppt.mix.next'],
+        },
+      ],
+    }
+    return {
+      ...structuredClone(DEFAULT_DEMO_DECK),
+      activePageId: pptPage.id,
+      voiceBindingSummary,
+      pages: [pptPage, mixedTouchPage],
+    }
+  }
+
+  // 'blank-canvas'
+  const blankTiles = [1, 2, 3, 4].map((idx) => ({
+    id: `blank.slot_${idx}`,
+    label: `自定义 ${idx}`,
+    icon: idx === 1 ? 'sparkles' : idx === 2 ? 'zap' : idx === 3 ? 'command' : 'terminal',
+    accent: (idx === 1 ? 'blue' : idx === 2 ? 'emerald' : 'slate') as 'blue' | 'emerald' | 'slate',
+    colSpan: 1 as const,
+    rowSpan: 1 as const,
+    mode: 'gesture' as const,
+  }))
+
+  return {
+    ...structuredClone(DEFAULT_DEMO_DECK),
+    activePageId: 'custom-canvas',
+    voiceBindingSummary,
+    pages: [
+      {
+        id: 'custom-canvas',
+        name: '自定义面板',
+        layout: 'grid',
+        columns: 2,
+        tiles: blankTiles,
+        zones: [
+          {
+            id: 'custom-canvas-bento',
+            kind: 'bento-grid',
+            columns: 2,
+            tileIds: blankTiles.map((t) => t.id),
+          },
+        ],
+      },
+    ],
+  }
 }
