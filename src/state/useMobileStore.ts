@@ -13,13 +13,12 @@ import type {
   PairingOfferQr,
   PointerButtonName,
   SessionPhase,
-  StarterPresetId,
   TextCommitMode,
-  VoicePresetKind,
 } from '../protocol/types'
 import {
   MAX_TILES_PER_PAGE,
   MAX_ZONES_PER_PAGE,
+  clampSpan,
   createNewCustomTile,
   createNewZone,
   createPageFromTemplate,
@@ -29,7 +28,7 @@ import {
   normalizePageZones,
   type PageTemplateId,
 } from '../input/bentoLayout'
-import { DEFAULT_DEMO_DECK, buildDemoPresetDeck } from '../transport/defaultDeck'
+import { DEFAULT_DEMO_DECK } from '../transport/defaultDeck'
 import {
   applyEffectiveThemeToDocument,
   discoverNativeLanHosts,
@@ -76,8 +75,6 @@ export type {
   VolumeKeyMouseMode,
 }
 
-export const PRESET_ONBOARDED_STORAGE_KEY = 'axonkey_mobile_preset_onboarded_v1'
-
 export interface TileFeedback {
   status: 'ok' | 'error'
   at: number
@@ -98,6 +95,11 @@ export interface EditingTileTarget {
   zoneId: string
   tileId: string
 }
+
+export type SelectedEditItem =
+  | { kind: 'tile'; pageId: string; zoneId: string; tileId: string }
+  | { kind: 'zone'; pageId: string; zoneId: string }
+  | null
 
 interface MobileStoreState {
   phase: SessionPhase
@@ -123,10 +125,10 @@ interface MobileStoreState {
   pairingOpen: boolean
   feelSheetOpen: boolean
   aboutSheetOpen: boolean
-  presetWizardOpen: boolean
   embeddedAirMouseActive: boolean
 
   layoutEditing: boolean
+  selectedEditItem: SelectedEditItem
   editingTileTarget: EditingTileTarget | null
   pageManagerOpen: boolean
 
@@ -155,10 +157,9 @@ interface MobileStoreState {
   setPairingOpen: (open: boolean) => void
   setFeelSheetOpen: (open: boolean) => void
   setAboutSheetOpen: (open: boolean) => void
-  setPresetWizardOpen: (open: boolean) => void
   setEmbeddedAirMouseZoneActive: (zoneId: string, active: boolean) => void
-  applyStarterPreset: (preset: StarterPresetId, voicePreset?: VoicePresetKind) => boolean
   setLayoutEditing: (editing: boolean) => void
+  setSelectedEditItem: (item: SelectedEditItem) => void
   openTileEditor: (pageId: string, zoneId: string, tileId: string) => void
   closeTileEditor: () => void
   setPageManagerOpen: (open: boolean) => void
@@ -169,10 +170,11 @@ interface MobileStoreState {
 
   submitDeckPatch: (patch: DeckLayoutPatch) => void
   updateTile: (pageId: string, tileId: string, patch: Partial<MobileTile>) => void
+  setTileSpan: (pageId: string, tileId: string, colSpan: 1 | 2, rowSpan: 1 | 2) => void
   cycleTileSpan: (pageId: string, tileId: string) => void
   deleteTile: (pageId: string, tileId: string) => void
   addTileToPage: (pageId: string, zoneId?: string, slotIndex?: number) => MobileTile | null
-  addZoneToPage: (pageId: string, kind: DeckZoneKind) => void
+  addZoneToPage: (pageId: string, kind: DeckZoneKind) => MobileDeckZone | null
   updateZone: (
     pageId: string,
     zoneId: string,
@@ -218,8 +220,7 @@ function computeShouldCaptureVolumeKeys(state: MobileStoreState): boolean {
     state.feelSheetOpen ||
     state.pageManagerOpen ||
     Boolean(state.editingTileTarget) ||
-    state.aboutSheetOpen ||
-    state.presetWizardOpen
+    state.aboutSheetOpen
   if (anySheetOpen) return false
 
   const inStandaloneAirMouse =
@@ -259,92 +260,80 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     singletonClient = new MobileSessionClient(
       {
         onPhaseChange: (phase, detail) => {
-        const keepOn = phase === 'active' && get().localFeel.keepScreenOn
-        setKeepScreenOn(keepOn)
-        if (phase !== 'active') {
-          setNativeGyroClutch(false)
-          setNativeGyroConfig('off', get().localFeel.gyroSensitivity)
-          set({ phase, statusDetail: detail ?? '', voiceLevel: 0 })
-        } else {
-          set({ phase, statusDetail: detail ?? '' })
-        }
-      },
-      onPaired: (host) => {
-        const nextHosts = saveHostProfile(host)
-        let shouldAutoOpenPresetWizard = false
-        if (typeof window !== 'undefined') {
-          try {
-            if (!window.localStorage.getItem(PRESET_ONBOARDED_STORAGE_KEY)) {
-              window.localStorage.setItem(PRESET_ONBOARDED_STORAGE_KEY, '1')
-              shouldAutoOpenPresetWizard = true
-            }
-          } catch {
-            // Ignore storage errors
+          const keepOn = phase === 'active' && get().localFeel.keepScreenOn
+          setKeepScreenOn(keepOn)
+          if (phase !== 'active') {
+            setNativeGyroClutch(false)
+            setNativeGyroConfig('off', get().localFeel.gyroSensitivity)
+            set({ phase, statusDetail: detail ?? '', voiceLevel: 0 })
+          } else {
+            set({ phase, statusDetail: detail ?? '' })
           }
-        }
-        set({
-          savedHosts: nextHosts,
-          pairingOpen: false,
-          connectingHostAddr: host.addrs[0] ?? null,
-          ...(shouldAutoOpenPresetWizard ? { presetWizardOpen: true } : {}),
-        })
-        triggerHaptic('confirm')
-      },
-      onReady: (payload) => {
-        set({
-          hostId: payload.hostId,
-          hostName: payload.hostName,
-          capabilities: payload.capabilities,
-          deck: payload.deckSnapshot,
-          deckRevision: payload.deckRevision,
-          context: payload.context,
-          contextRevision: payload.contextRevision,
-          pairingOpen: false,
-          conflictBanner: null,
-          errorToast: null,
-        })
-        triggerHaptic('confirm')
-      },
-      onDeckUpdate: (snapshot, revision) => {
-        set({ deck: snapshot, deckRevision: revision, conflictBanner: null })
-      },
-      onDeckConflict: (latestSnapshot, latestRevision, message) => {
-        set({
-          deck: latestSnapshot,
-          deckRevision: latestRevision,
-          conflictBanner: message,
-        })
-        triggerHaptic('error')
-      },
-      onContextChanged: (context, revision) => {
-        set({ context, contextRevision: revision })
-      },
-      onCommandResult: (requestId, ok, _code, message) => {
-        const tileId = pendingTileReqMap.get(requestId)
-        if (tileId) {
-          pendingTileReqMap.delete(requestId)
-          if (!ok) triggerHaptic('error')
-          set((s) => ({
-            tileFeedback: {
-              ...s.tileFeedback,
-              [tileId]: { status: ok ? 'ok' : 'error', at: Date.now() },
-            },
-            errorToast: !ok && message ? message : s.errorToast,
-          }))
-        } else if (!ok && message) {
+        },
+        onPaired: (host) => {
+          const nextHosts = saveHostProfile(host)
+          set({
+            savedHosts: nextHosts,
+            pairingOpen: false,
+            connectingHostAddr: host.addrs[0] ?? null,
+          })
+          triggerHaptic('confirm')
+        },
+        onReady: (payload) => {
+          set({
+            hostId: payload.hostId,
+            hostName: payload.hostName,
+            capabilities: payload.capabilities,
+            deck: payload.deckSnapshot,
+            deckRevision: payload.deckRevision,
+            context: payload.context,
+            contextRevision: payload.contextRevision,
+            pairingOpen: false,
+            conflictBanner: null,
+            errorToast: null,
+          })
+          triggerHaptic('confirm')
+        },
+        onDeckUpdate: (snapshot, revision) => {
+          set({ deck: snapshot, deckRevision: revision, conflictBanner: null })
+        },
+        onDeckConflict: (latestSnapshot, latestRevision, message) => {
+          set({
+            deck: latestSnapshot,
+            deckRevision: latestRevision,
+            conflictBanner: message,
+          })
+          triggerHaptic('error')
+        },
+        onContextChanged: (context, revision) => {
+          set({ context, contextRevision: revision })
+        },
+        onCommandResult: (requestId, ok, _code, message) => {
+          const tileId = pendingTileReqMap.get(requestId)
+          if (tileId) {
+            pendingTileReqMap.delete(requestId)
+            if (!ok) triggerHaptic('error')
+            set((s) => ({
+              tileFeedback: {
+                ...s.tileFeedback,
+                [tileId]: { status: ok ? 'ok' : 'error', at: Date.now() },
+              },
+              errorToast: !ok && message ? message : s.errorToast,
+            }))
+          } else if (!ok && message) {
+            set({ errorToast: message })
+          }
+        },
+        onTextStatus: (_requestId, status, message) => {
+          if (status === 'ok') triggerHaptic('confirm')
+          if (status === 'error' || status === 'unknown') triggerHaptic('error')
+          set({ textDelivery: { status, message } })
+        },
+        onError: (message) => {
           set({ errorToast: message })
-        }
+        },
       },
-      onTextStatus: (_requestId, status, message) => {
-        if (status === 'ok') triggerHaptic('confirm')
-        if (status === 'error' || status === 'unknown') triggerHaptic('error')
-        set({ textDelivery: { status, message } })
-      },
-      onError: (message) => {
-        set({ errorToast: message })
-      },
-    },
-    get().localFeel.deviceName,
+      get().localFeel.deviceName,
     )
     return singletonClient
   }
@@ -373,10 +362,10 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     pairingOpen: false,
     feelSheetOpen: false,
     aboutSheetOpen: false,
-    presetWizardOpen: false,
     embeddedAirMouseActive: false,
 
     layoutEditing: false,
+    selectedEditItem: null,
     editingTileTarget: null,
     pageManagerOpen: false,
 
@@ -575,11 +564,8 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
       if (hosts.length > 0) {
         get().connectSavedHost(hosts[0])
-        // Also run UDP LAN auto-discovery immediately in case PC IP or WSS port changed!
         discoverNativeLanHosts(600)
       } else {
-        // Start in Demo Mode so first-time users can immediately feel the hardware UI,
-        // and also discover LAN hosts in background for PairingSheet hints.
         get().connectDemo()
         discoverNativeLanHosts(600)
       }
@@ -755,8 +741,11 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
     setActivePage: (pageId) => {
       const { deck } = get()
-      if (deck.activePageId === pageId) return
-      set({ deck: { ...deck, activePageId: pageId } })
+      if (deck.activePageId === pageId) {
+        set({ selectedEditItem: null })
+        return
+      }
+      set({ deck: { ...deck, activePageId: pageId }, selectedEditItem: null })
       ensureClient().sendDeckUpdate(get().deckRevision, { activePageId: pageId })
     },
 
@@ -771,17 +760,6 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
     setAboutSheetOpen: (open) => set({ aboutSheetOpen: open }),
 
-    setPresetWizardOpen: (open) => {
-      if (!open && typeof window !== 'undefined') {
-        try {
-          window.localStorage.setItem(PRESET_ONBOARDED_STORAGE_KEY, '1')
-        } catch {
-          // Ignore storage issues
-        }
-      }
-      set({ presetWizardOpen: open })
-    },
-
     setEmbeddedAirMouseZoneActive: (zoneId, active) => {
       if (active) activeEmbeddedAirMouseZoneIds.add(zoneId)
       else activeEmbeddedAirMouseZoneIds.delete(zoneId)
@@ -791,35 +769,6 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       }
     },
 
-    applyStarterPreset: (preset, voicePreset) => {
-      if (typeof window !== 'undefined') {
-        try {
-          window.localStorage.setItem(PRESET_ONBOARDED_STORAGE_KEY, '1')
-        } catch {
-          // Ignore storage issues
-        }
-      }
-      const nextWorkspace: WorkspaceMode = preset === 'daily-remote' ? 'remote' : 'deck'
-      const previewDeck = buildDemoPresetDeck(preset, voicePreset)
-      const s = get()
-      if (s.phase === 'active') {
-        const reqId = ensureClient().sendApplyPreset(preset, voicePreset)
-        set({
-          workspaceMode: nextWorkspace,
-          layoutEditing: false,
-          presetWizardOpen: false,
-        })
-        return reqId !== null
-      }
-      set({
-        deck: previewDeck,
-        workspaceMode: nextWorkspace,
-        layoutEditing: false,
-        presetWizardOpen: false,
-      })
-      return true
-    },
-
     setLayoutEditing: (editing) => {
       if (editing) {
         setNativeGyroClutch(false)
@@ -827,7 +776,6 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
         const s = get()
         const nextMode: WorkspaceMode =
           s.workspaceMode === 'pointer' ? 'deck' : s.workspaceMode
-        // Ensure activePageId matches the visible page when entering edit mode
         let targetPageId = s.deck.activePageId
         if (nextMode === 'remote') {
           const remote =
@@ -845,6 +793,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
         set({
           layoutEditing: true,
           workspaceMode: nextMode,
+          selectedEditItem: null,
           editingTileTarget: null,
           pageManagerOpen: false,
           gyroGuard: null,
@@ -858,10 +807,15 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       } else {
         set({
           layoutEditing: false,
+          selectedEditItem: null,
           editingTileTarget: null,
           pageManagerOpen: false,
         })
       }
+    },
+
+    setSelectedEditItem: (item) => {
+      set({ selectedEditItem: item })
     },
 
     openTileEditor: (pageId, zoneId, tileId) => {
@@ -951,27 +905,40 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       get().submitDeckPatch({ pages: nextPages })
     },
 
-    cycleTileSpan: (pageId, tileId) => {
+    setTileSpan: (pageId, tileId, colSpan, rowSpan) => {
       const { deck } = get()
       const page = deck.pages.find((p) => p.id === pageId)
       const tile = page?.tiles.find((t) => t.id === tileId)
       if (!page || !tile) return
-      const nextSpan = cycleBentoSpan(tile.colSpan, tile.rowSpan)
+      const w = clampSpan(colSpan)
+      const h = clampSpan(rowSpan)
+      if (clampSpan(tile.colSpan) === w && clampSpan(tile.rowSpan) === h) return
       const zones = normalizePageZones(page)
       const nextPages = deck.pages.map((p) =>
         p.id === pageId
           ? {
               ...p,
               zones,
-              tiles: p.tiles.map((t) => (t.id === tileId ? { ...t, ...nextSpan } : t)),
+              tiles: p.tiles.map((t) =>
+                t.id === tileId ? { ...t, colSpan: w, rowSpan: h } : t,
+              ),
             }
           : p,
       )
       get().submitDeckPatch({ pages: nextPages })
     },
 
+    cycleTileSpan: (pageId, tileId) => {
+      const { deck } = get()
+      const page = deck.pages.find((p) => p.id === pageId)
+      const tile = page?.tiles.find((t) => t.id === tileId)
+      if (!page || !tile) return
+      const nextSpan = cycleBentoSpan(tile.colSpan, tile.rowSpan)
+      get().setTileSpan(pageId, tileId, nextSpan.colSpan, nextSpan.rowSpan)
+    },
+
     deleteTile: (pageId, tileId) => {
-      const { deck, editingTileTarget } = get()
+      const { deck, editingTileTarget, selectedEditItem } = get()
       const page = deck.pages.find((p) => p.id === pageId)
       if (!page) return
       const zones = normalizePageZones(page).map((z) => {
@@ -1001,14 +968,17 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
             }
           : p,
       )
-      if (editingTileTarget?.tileId === tileId) {
-        set({ editingTileTarget: null })
-      }
+      set({
+        ...(editingTileTarget?.tileId === tileId ? { editingTileTarget: null } : {}),
+        ...(selectedEditItem?.kind === 'tile' && selectedEditItem.tileId === tileId
+          ? { selectedEditItem: null }
+          : {}),
+      })
       get().submitDeckPatch({ pages: nextPages })
     },
 
     addTileToPage: (pageId, zoneId, slotIndex) => {
-      const { deck } = get()
+      const { deck, layoutEditing } = get()
       const page = deck.pages.find((p) => p.id === pageId)
       if (!page) return null
       if (page.tiles.length >= MAX_TILES_PER_PAGE) {
@@ -1018,13 +988,13 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       const newTile = createNewCustomTile(page.tiles.length + 1)
       const zones = normalizePageZones(page)
 
-      let placed = false
+      let placedZoneId: string | null = null
       const nextZones = zones.map((z) => {
         if (zoneId && z.id === zoneId) {
           if (z.kind === 'dpad-3x3' && slotIndex !== undefined && slotIndex >= 0 && slotIndex < 9) {
             const slots = normalizeDpadSlotIds(z.tileIds)
             slots[slotIndex] = newTile.id
-            placed = true
+            placedZoneId = z.id
             return { ...z, tileIds: slots }
           }
           if (
@@ -1035,18 +1005,18 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
           ) {
             const slots = normalizeGesturePadSlotIds(z.tileIds)
             slots[slotIndex] = newTile.id
-            placed = true
+            placedZoneId = z.id
             return { ...z, tileIds: slots }
           }
           if (z.kind === 'bento-grid') {
-            placed = true
+            placedZoneId = z.id
             return { ...z, tileIds: [...z.tileIds, newTile.id] }
           }
         }
         return z
       })
 
-      if (!placed) {
+      if (!placedZoneId) {
         let lastBentoIdx = -1
         for (let i = nextZones.length - 1; i >= 0; i -= 1) {
           if (nextZones[i].kind === 'bento-grid') {
@@ -1055,13 +1025,16 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
           }
         }
         if (lastBentoIdx >= 0) {
+          placedZoneId = nextZones[lastBentoIdx].id
           nextZones[lastBentoIdx] = {
             ...nextZones[lastBentoIdx],
             tileIds: [...nextZones[lastBentoIdx].tileIds, newTile.id],
           }
         } else if (nextZones.length < MAX_ZONES_PER_PAGE) {
+          const createdZoneId = `${page.id}-bento-${nextZones.length + 1}`
+          placedZoneId = createdZoneId
           nextZones.push({
-            id: `${page.id}-bento-${nextZones.length + 1}`,
+            id: createdZoneId,
             kind: 'bento-grid',
             columns: page.columns,
             tileIds: [newTile.id],
@@ -1081,18 +1054,28 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
             }
           : p,
       )
+      if (layoutEditing && placedZoneId) {
+        set({
+          selectedEditItem: {
+            kind: 'tile',
+            pageId,
+            zoneId: placedZoneId,
+            tileId: newTile.id,
+          },
+        })
+      }
       get().submitDeckPatch({ pages: nextPages })
       return newTile
     },
 
     addZoneToPage: (pageId, kind) => {
-      const { deck } = get()
+      const { deck, layoutEditing } = get()
       const page = deck.pages.find((p) => p.id === pageId)
-      if (!page) return
+      if (!page) return null
       const zones = normalizePageZones(page)
       if (zones.length >= MAX_ZONES_PER_PAGE) {
-        set({ errorToast: `单页最多支持 ${MAX_ZONES_PER_PAGE} 个区块` })
-        return
+        set({ errorToast: `单页最多支持 ${MAX_ZONES_PER_PAGE} 个组件` })
+        return null
       }
       const { zone, addedTiles } = createNewZone(page, kind)
       const nextZones = kind === 'pointer-pad' ? [zone, ...zones] : [...zones, zone]
@@ -1105,7 +1088,17 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
             }
           : p,
       )
+      if (layoutEditing) {
+        set({
+          selectedEditItem: {
+            kind: 'zone',
+            pageId,
+            zoneId: zone.id,
+          },
+        })
+      }
       get().submitDeckPatch({ pages: nextPages })
+      return zone
     },
 
     updateZone: (pageId, zoneId, patch) => {
@@ -1139,12 +1132,12 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     },
 
     deleteZone: (pageId, zoneId) => {
-      const { deck, editingTileTarget } = get()
+      const { deck, editingTileTarget, selectedEditItem } = get()
       const page = deck.pages.find((p) => p.id === pageId)
       if (!page) return
       const zones = normalizePageZones(page)
       if (zones.length <= 1) {
-        set({ errorToast: '每页至少保留一个区块' })
+        set({ errorToast: '每页至少保留一个组件' })
         return
       }
       const nextZones = zones.filter((z) => z.id !== zoneId)
@@ -1154,9 +1147,14 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       const nextTiles = page.tiles.filter(
         (t) => !removedIds.has(t.id) || retainedIds.has(t.id),
       )
-      if (editingTileTarget && editingTileTarget.zoneId === zoneId) {
-        set({ editingTileTarget: null })
-      }
+      set({
+        ...(editingTileTarget && editingTileTarget.zoneId === zoneId
+          ? { editingTileTarget: null }
+          : {}),
+        ...(selectedEditItem && selectedEditItem.zoneId === zoneId
+          ? { selectedEditItem: null }
+          : {}),
+      })
       const nextPages = deck.pages.map((p) =>
         p.id === pageId ? { ...p, tiles: nextTiles, zones: nextZones } : p,
       )
@@ -1176,10 +1174,8 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       const newPage = createPageFromTemplate(template, deck.pages.length + 1, customName)
       const nextPages = [...deck.pages, newPage]
       const nextWorkspace: WorkspaceMode =
-        newPage.layout === 'remote' && deck.pages.every((p) => p.layout !== 'remote' && p.id !== 'classic-remote')
-          ? 'remote'
-          : 'deck'
-      set({ workspaceMode: nextWorkspace, pageManagerOpen: false })
+        newPage.layout === 'remote' ? 'remote' : 'deck'
+      set({ workspaceMode: nextWorkspace, pageManagerOpen: false, selectedEditItem: null })
       get().submitDeckPatch({ pages: nextPages, activePageId: newPage.id })
       return newPage
     },
@@ -1195,13 +1191,13 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     deletePage: (pageId) => {
       const { deck } = get()
       if (deck.pages.length <= 1) {
-        set({ errorToast: '至少保留一个控制页面' })
+        set({ errorToast: '至少保留一个页面' })
         return
       }
       const nextPages = deck.pages.filter((p) => p.id !== pageId)
       const nextActive =
         deck.activePageId === pageId ? nextPages[0].id : deck.activePageId
-      set({ editingTileTarget: null })
+      set({ editingTileTarget: null, selectedEditItem: null })
       get().submitDeckPatch({ pages: nextPages, activePageId: nextActive })
     },
 

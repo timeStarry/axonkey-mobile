@@ -93,6 +93,7 @@ export interface AxonkeyAndroidBridge {
   getDefaultDeviceName?(): string
   isSystemDarkMode?(): boolean
   setSystemBarTheme?(isDark: boolean): void
+  setBackInterceptEnabled?(enabled: boolean): void
   setKeepScreenOn(enabled: boolean): void
   openQrScanner(): void
   connectWss(url: string, hostId: string, caCertDerB64: string, subprotocol: string): void
@@ -146,6 +147,7 @@ declare global {
     __axonkeyNativeOnVoiceLevel?: (level: number) => void
     __axonkeyNativeOnGyroState?: (state: string) => void
     __axonkeyNativeOnHostsDiscovered?: (jsonArray: string) => void
+    __axonkeyNativeOnBack?: () => void
     __axonkeyNativeOnSystemDarkChanged?: (isDark: boolean) => void
     __axonkeyNativeOnVolumeKey?: (
       key: 'up' | 'down',
@@ -309,7 +311,7 @@ export function applyEffectiveThemeToDocument(theme: EffectiveTheme): void {
     document.documentElement.dataset.theme = theme
     const metaTheme = document.querySelector('meta[name="theme-color"]')
     if (metaTheme) {
-      metaTheme.setAttribute('content', theme === 'dark' ? '#0d1017' : '#f4f6fb')
+      metaTheme.setAttribute('content', theme === 'dark' ? '#141518' : '#f2f2f6')
     }
   }
   if (
@@ -318,6 +320,19 @@ export function applyEffectiveThemeToDocument(theme: EffectiveTheme): void {
   ) {
     try {
       window.AxonkeyNative.setSystemBarTheme(theme === 'dark')
+    } catch {
+      // Ignore bridge errors in restricted test mocks
+    }
+  }
+}
+
+export function setNativeBackIntercept(enabled: boolean): void {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.AxonkeyNative?.setBackInterceptEnabled === 'function'
+  ) {
+    try {
+      window.AxonkeyNative.setBackInterceptEnabled(enabled)
     } catch {
       // Ignore bridge errors in restricted test mocks
     }

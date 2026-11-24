@@ -3,50 +3,58 @@
 :root,
 [data-theme="dark"] {
   color-scheme: dark;
-  --ak-canvas: #0a0c10;
-  --ak-chrome: rgba(13, 16, 23, 0.94);
-  --ak-dock: #0c0f16;
-  --ak-sheet: #121620;
-  --ak-seg: #11151e;
-  --ak-well: #0d1018;
-  --ak-elevated: #151923;
-  --ak-elevated-alt: #181d29;
-  --ak-input: #131824;
-  --ak-active-tab: #22293a;
-  --ak-pill: rgba(255, 255, 255, 0.05);
-  --ak-pill-strong: rgba(255, 255, 255, 0.09);
-  --ak-border: rgba(255, 255, 255, 0.085);
-  --ak-border-strong: rgba(255, 255, 255, 0.14);
+  --ak-canvas: #141518;
+  --ak-chrome: #141518;
+  --ak-dock: #141518;
+  --ak-sheet: #191a1f;
+  --ak-seg: #191a1f;
+  --ak-well: #191a1f;
+  --ak-elevated: #1f2025;
+  --ak-elevated-alt: #272930;
+  --ak-input: #191a1f;
+  --ak-active-tab: #272930;
+  --ak-solid-bg: #f2f2f7;
+  --ak-solid-fg: #141518;
+  --ak-live-dot: #30d158;
+  --ak-pill: rgba(255, 255, 255, 0.04);
+  --ak-pill-strong: rgba(255, 255, 255, 0.08);
+  --ak-border: rgba(255, 255, 255, 0.06);
+  --ak-border-strong: rgba(255, 255, 255, 0.09);
   --ak-border-subtle: rgba(255, 255, 255, 0.05);
-  --ak-text: #f4f4f5;
-  --ak-text-2: #a1a1aa;
-  --ak-text-3: #71717a;
-  --ak-backdrop: rgba(0, 0, 0, 0.74);
-  --ak-code-chip: rgba(0, 0, 0, 0.28);
+  --ak-text: #f2f2f7;
+  --ak-text-2: #8e8e93;
+  --ak-text-3: #58585e;
+  --ak-backdrop: rgba(0, 0, 0, 0.56);
+  --ak-surface-shadow: none;
+  --ak-elevated-shadow: 0 2px 10px rgba(0, 0, 0, 0.24);
 }
 
 [data-theme="light"] {
   color-scheme: light;
-  --ak-canvas: #eef2f7;
-  --ak-chrome: rgba(244, 246, 251, 0.94);
-  --ak-dock: #e7ecf4;
-  --ak-sheet: #f8fafd;
-  --ak-seg: #dde4ef;
-  --ak-well: #eef2f8;
+  --ak-canvas: #f2f2f6;
+  --ak-chrome: #f2f2f6;
+  --ak-dock: #f2f2f6;
+  --ak-sheet: #ffffff;
+  --ak-seg: #e5e5ea;
+  --ak-well: #e5e5ea;
   --ak-elevated: #ffffff;
-  --ak-elevated-alt: #f4f7fb;
+  --ak-elevated-alt: #ffffff;
   --ak-input: #ffffff;
   --ak-active-tab: #ffffff;
-  --ak-pill: rgba(15, 23, 42, 0.05);
-  --ak-pill-strong: rgba(15, 23, 42, 0.085);
-  --ak-border: rgba(15, 23, 42, 0.10);
-  --ak-border-strong: rgba(15, 23, 42, 0.16);
-  --ak-border-subtle: rgba(15, 23, 42, 0.055);
-  --ak-text: #0f172a;
-  --ak-text-2: #475569;
-  --ak-text-3: #64748b;
-  --ak-backdrop: rgba(15, 23, 42, 0.40);
-  --ak-code-chip: rgba(15, 23, 42, 0.055);
+  --ak-solid-bg: #1c1c1e;
+  --ak-solid-fg: #ffffff;
+  --ak-live-dot: #28cd41;
+  --ak-pill: rgba(0, 0, 0, 0.035);
+  --ak-pill-strong: rgba(0, 0, 0, 0.07);
+  --ak-border: rgba(0, 0, 0, 0.05);
+  --ak-border-strong: rgba(0, 0, 0, 0.09);
+  --ak-border-subtle: rgba(0, 0, 0, 0.04);
+  --ak-text: #1c1c1e;
+  --ak-text-2: #6c6c70;
+  --ak-text-3: #9a9a9e;
+  --ak-backdrop: rgba(0, 0, 0, 0.34);
+  --ak-surface-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+  --ak-elevated-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 @layer base {
@@ -70,7 +78,7 @@
   }
 }
 
-/* Semantic Hardware Surfaces */
+/* Plan B Monolithic Machined Aluminum / Ceramic Surfaces */
 .ak-canvas {
   background-color: var(--ak-canvas);
   color: var(--ak-text);
@@ -78,12 +86,12 @@
 
 .ak-chrome {
   background-color: var(--ak-chrome);
-  border-color: var(--ak-border);
+  border-color: var(--ak-border-subtle);
 }
 
 .ak-dock {
   background-color: var(--ak-dock);
-  border-color: var(--ak-border);
+  border-color: var(--ak-border-subtle);
 }
 
 .ak-sheet {
@@ -98,24 +106,36 @@
 
 .ak-seg {
   background-color: var(--ak-seg);
-  border-color: var(--ak-border);
+  border-color: var(--ak-border-subtle);
 }
 
 .ak-well {
   background-color: var(--ak-well);
-  border-color: var(--ak-border);
+  border-color: var(--ak-border-subtle);
 }
 
 .ak-elevated {
   background-color: var(--ak-elevated);
   border-color: var(--ak-border);
   color: var(--ak-text);
+  box-shadow: var(--ak-surface-shadow);
 }
 
 .ak-elevated-alt {
   background-color: var(--ak-elevated-alt);
-  border-color: var(--ak-border);
-  color: var(--ak-text-2);
+  border-color: var(--ak-border-strong);
+  color: var(--ak-text);
+  box-shadow: var(--ak-elevated-shadow);
+}
+
+.ak-primary-solid {
+  background-color: var(--ak-solid-bg);
+  border-color: var(--ak-solid-bg);
+  color: var(--ak-solid-fg);
+}
+
+.ak-live-dot {
+  background-color: var(--ak-live-dot);
 }
 
 .ak-input {
@@ -130,7 +150,9 @@
 
 .ak-active-tab {
   background-color: var(--ak-active-tab);
+  border-color: var(--ak-border-strong);
   color: var(--ak-text);
+  box-shadow: var(--ak-elevated-shadow);
 }
 
 .ak-pill {
@@ -144,7 +166,7 @@
 }
 
 .ak-code-chip {
-  background-color: var(--ak-code-chip);
+  background-color: var(--ak-pill);
   border-color: var(--ak-border-subtle);
 }
 
@@ -164,108 +186,101 @@
   border-color: var(--ak-border);
 }
 
-/* Precision anodized / ceramic chassis & keycap surfaces */
+.ak-border-subtle {
+  border-color: var(--ak-border-subtle);
+}
+
+.ak-border-strong {
+  border-color: var(--ak-border-strong);
+}
+
+/* Recessed Well & Sculpted Circular Clickpad Ring */
 .chassis-well {
-  background: linear-gradient(180deg, #0e1117 0%, #12161f 100%);
-  border-color: var(--ak-border);
-  box-shadow:
-    inset 0 2px 6px rgba(0, 0, 0, 0.65),
-    0 1px 0 rgba(255, 255, 255, 0.05);
+  background-color: var(--ak-well);
+  border-color: var(--ak-border-subtle);
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.22);
 }
 
 [data-theme="light"] .chassis-well {
-  background: linear-gradient(180deg, #e1e7f1 0%, #e9eef7 100%);
+  background-color: var(--ak-well);
+  border-color: var(--ak-border-subtle);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.clickpad-ring {
+  background-color: var(--ak-well);
+  border-color: var(--ak-border-subtle);
   box-shadow:
-    inset 0 2px 6px rgba(15, 23, 42, 0.08),
-    0 1px 0 rgba(255, 255, 255, 0.9);
+    inset 0 2px 8px rgba(0, 0, 0, 0.32),
+    0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="light"] .clickpad-ring {
+  background-color: var(--ak-well);
+  border-color: var(--ak-border-subtle);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.06),
+    0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.clickpad-center {
+  background-color: var(--ak-elevated-alt);
+  border-color: var(--ak-border-strong);
+  color: var(--ak-text);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.18),
+    0 1px 3px rgba(0, 0, 0, 0.2);
+  transition:
+    transform 75ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+[data-theme="light"] .clickpad-center {
+  background-color: var(--ak-elevated-alt);
+  border-color: var(--ak-border-strong);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .tile-surface {
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0) 55%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.11),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.45),
-    0 3px 10px rgba(0, 0, 0, 0.42);
   transition:
-    transform 80ms cubic-bezier(0.2, 0, 0, 1),
-    box-shadow 80ms cubic-bezier(0.2, 0, 0, 1),
+    transform 75ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 120ms ease,
     border-color 120ms ease,
-    background-color 120ms ease;
-}
-
-[data-theme="light"] .tile-surface {
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 65%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    inset 0 -1px 0 rgba(15, 23, 42, 0.07),
-    0 2px 7px rgba(15, 23, 42, 0.075),
-    0 1px 2px rgba(15, 23, 42, 0.04);
+    box-shadow 120ms ease;
 }
 
 .tile-surface:active,
 .tile-pressed {
-  transform: scale(0.97);
-  box-shadow:
-    inset 0 2px 7px rgba(0, 0, 0, 0.65),
-    0 0 0 1px rgba(96, 165, 250, 0.22);
-}
-
-[data-theme="light"] .tile-surface:active,
-[data-theme="light"] .tile-pressed {
-  transform: scale(0.97);
-  box-shadow:
-    inset 0 2px 5px rgba(15, 23, 42, 0.12),
-    0 0 0 1px rgba(37, 99, 235, 0.28);
+  transform: scale(0.972);
 }
 
 .trackpad-dots {
-  background-color: #0e1118;
-  background-image:
-    radial-gradient(rgba(255, 255, 255, 0.075) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, rgba(0, 0, 0, 0.22) 100%);
-  background-size:
-    16px 16px,
-    100% 100%;
-  box-shadow:
-    inset 0 2px 10px rgba(0, 0, 0, 0.65),
-    0 1px 0 rgba(255, 255, 255, 0.05);
+  background-color: var(--ak-well);
+  background-image: radial-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px);
+  background-size: 18px 18px;
+  box-shadow: inset 0 1px 6px rgba(0, 0, 0, 0.28);
 }
 
 [data-theme="light"] .trackpad-dots {
-  background-color: #e4eaf3;
-  background-image:
-    radial-gradient(rgba(15, 23, 42, 0.11) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(15, 23, 42, 0.03) 100%);
-  background-size:
-    16px 16px,
-    100% 100%;
-  box-shadow:
-    inset 0 2px 9px rgba(15, 23, 42, 0.085),
-    0 1px 0 rgba(255, 255, 255, 0.9);
+  background-color: var(--ak-well);
+  background-image: radial-gradient(rgba(0, 0, 0, 0.065) 1px, transparent 1px);
+  background-size: 18px 18px;
+  box-shadow: inset 0 1px 5px rgba(0, 0, 0, 0.05);
 }
 
 .ak-voice-idle {
-  background: linear-gradient(180deg, #1a2234 0%, #141926 100%);
-  border-color: rgba(96, 165, 250, 0.26);
-  color: #f4f4f5;
-}
-
-[data-theme="light"] .ak-voice-idle {
-  background: linear-gradient(180deg, #ffffff 0%, #eff5ff 100%);
-  border-color: rgba(37, 99, 235, 0.28);
-  color: #0f172a;
+  background-color: var(--ak-elevated-alt);
+  border-color: var(--ak-border-strong);
+  color: var(--ak-text);
+  box-shadow: var(--ak-elevated-shadow);
 }
 
 .ak-clutch-engaged {
-  background: linear-gradient(180deg, #162742 0%, #101a2c 100%);
-  border-color: rgba(96, 165, 250, 0.62);
-  box-shadow: inset 0 0 32px rgba(59, 130, 246, 0.22);
-}
-
-[data-theme="light"] .ak-clutch-engaged {
-  background: linear-gradient(180deg, #dbeafe 0%, #eff6ff 100%);
-  border-color: rgba(37, 99, 235, 0.55);
-  box-shadow: inset 0 0 28px rgba(37, 99, 235, 0.14);
+  background-color: var(--ak-elevated-alt);
+  border-color: var(--ak-border-strong);
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -280,7 +295,7 @@
 input[type="range"].ak-slider {
   -webkit-appearance: none;
   appearance: none;
-  height: 6px;
+  height: 5px;
   border-radius: 9999px;
   background: var(--ak-pill-strong);
   outline: none;
@@ -289,12 +304,12 @@ input[type="range"].ak-slider {
 input[type="range"].ak-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 9999px;
-  background: #ffffff;
-  border: 2.5px solid #3b82f6;
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.3);
+  background: var(--ak-solid-bg);
+  border: 2px solid var(--ak-canvas);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
   cursor: pointer;
 }
 

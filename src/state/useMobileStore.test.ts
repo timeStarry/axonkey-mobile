@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PRESET_ONBOARDED_STORAGE_KEY, useMobileStore } from './useMobileStore'
+import { useMobileStore } from './useMobileStore'
 import { saveHostProfile, type AxonkeyAndroidBridge } from '../transport/nativeBridge'
 
-describe('useMobileStore (v2 LAN Auto-Discovery & Live Telemetry)', () => {
+describe('useMobileStore (LAN Auto-Discovery, Live Telemetry & Contextual Edit State)', () => {
   let connectUrls: string[] = []
   let savedCredentialsJson = '[]'
 
@@ -57,12 +57,10 @@ describe('useMobileStore (v2 LAN Auto-Discovery & Live Telemetry)', () => {
       connectingHostAddr: null,
     })
 
-    // Initial connection tries the stale address
     useMobileStore.getState().connectSavedHost(staleHost)
     expect(connectUrls).toEqual(['wss://192.168.1.10:50123/ws'])
     expect(useMobileStore.getState().phase).toBe('authenticating')
 
-    // UDP LAN discovery arrives with updated DHCP IP & ephemeral WSS port!
     useMobileStore.getState().applyDiscoveredHosts([
       {
         hostId: 'axonkey-pc-01',
@@ -72,19 +70,20 @@ describe('useMobileStore (v2 LAN Auto-Discovery & Live Telemetry)', () => {
       },
     ])
 
-    // Must immediately persist new address AND open WSS to the newly discovered endpoint!
     expect(connectUrls.at(-1)).toBe('wss://192.168.1.88:59876/ws')
     expect(useMobileStore.getState().savedHosts[0].addrs).toEqual(['192.168.1.88:59876'])
     expect(JSON.parse(savedCredentialsJson)[0].addrs).toEqual(['192.168.1.88:59876'])
   })
 
-  it('wires native voice level & gyro guard callbacks into store state', () => {
+  it('wires native voice level, gyro guard & Plan B theme system bar callbacks cleanly', () => {
+    const setSystemBarThemeMock = vi.fn()
+    window.AxonkeyNative!.setSystemBarTheme = setSystemBarThemeMock
     useMobileStore.getState().init()
 
     window.__axonkeyNativeOnVoiceLevel?.(0.76)
     expect(useMobileStore.getState().voiceLevel).toBeCloseTo(0.76)
 
-    window.__axonkeyNativeOnVoiceLevel?.(2.5) // Clamped to 1.0
+    window.__axonkeyNativeOnVoiceLevel?.(2.5)
     expect(useMobileStore.getState().voiceLevel).toBe(1)
 
     window.__axonkeyNativeOnGyroState?.('vertical_guard')
@@ -93,26 +92,20 @@ describe('useMobileStore (v2 LAN Auto-Discovery & Live Telemetry)', () => {
     useMobileStore.getState().clearGyroGuard()
     expect(useMobileStore.getState().gyroGuard).toBeNull()
 
-    // System dark-mode changes dynamically update effectiveTheme only when themeMode === 'system'
     useMobileStore.getState().setThemeMode('system')
     window.__axonkeyNativeOnSystemDarkChanged?.(false)
     expect(useMobileStore.getState().effectiveTheme).toBe('light')
     expect(document.documentElement.dataset.theme).toBe('light')
+    expect(setSystemBarThemeMock).toHaveBeenLastCalledWith(false)
 
     window.__axonkeyNativeOnSystemDarkChanged?.(true)
     expect(useMobileStore.getState().effectiveTheme).toBe('dark')
     expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(setSystemBarThemeMock).toHaveBeenLastCalledWith(true)
   })
 
-  it('auto-opens PresetWizardSheet once on brand-new QR pairing and sends deck.apply_preset', () => {
-    const sentWssMessages: string[] = []
-    window.AxonkeyNative!.sendWssText = vi.fn((payload: string) => {
-      sentWssMessages.push(payload)
-      return true
-    })
-
-    useMobileStore.setState({ presetWizardOpen: false })
-    expect(window.localStorage.getItem(PRESET_ONBOARDED_STORAGE_KEY)).toBeNull()
+  it('completes QR pairing cleanly without mobile preset wizard popups and manages contextual edit selection', () => {
+    useMobileStore.setState({ pairingOpen: true, layoutEditing: false, selectedEditItem: null })
 
     useMobileStore.getState().pairFromOffer({
       v: 1,
@@ -134,43 +127,29 @@ describe('useMobileStore (v2 LAN Auto-Discovery & Live Telemetry)', () => {
       }),
     )
 
-    expect(useMobileStore.getState().presetWizardOpen).toBe(true)
-    expect(window.localStorage.getItem(PRESET_ONBOARDED_STORAGE_KEY)).toBe('1')
+    expect(useMobileStore.getState().pairingOpen).toBe(false)
+    expect(useMobileStore.getState().savedHosts[0]?.hostId).toBe('pc-new-1')
 
-    // Subsequent server.ready enables sending deck.apply_preset to live PC
-    window.__axonkeyNativeOnMessage?.(
-      JSON.stringify({
-        type: 'server.ready',
-        sessionId: 'sess-live-1',
-        inputEpoch: 1,
-        inputGeneration: 1,
-        leaseId: 1,
-        leaseTtlMs: 5000,
-        tickIntervalMs: 500,
-        hostId: 'pc-new-1',
-        hostName: 'New Studio PC',
-        capabilities: {
-          relativePointer: true,
-          textCommit: true,
-          audioPcm16: true,
-          platform: 'windows',
-        },
-        deckSnapshot: useMobileStore.getState().deck,
-        deckRevision: 1,
-        context: { appId: null, appName: null, profileName: '默认配置' },
-        contextRevision: 1,
-      }),
-    )
+    // Contextual edit mode selection & 1-tap setTileSpan
+    useMobileStore.getState().setWorkspaceMode('deck')
+    useMobileStore.getState().setLayoutEditing(true)
+    expect(useMobileStore.getState().selectedEditItem).toBeNull()
 
-    sentWssMessages.length = 0
-    const applied = useMobileStore.getState().applyStarterPreset('vibe-coding', 'system-win-h')
-    expect(applied).toBe(true)
-    expect(useMobileStore.getState().presetWizardOpen).toBe(false)
-    expect(JSON.parse(sentWssMessages[0])).toMatchObject({
-      type: 'deck.apply_preset',
-      sessionId: 'sess-live-1',
-      preset: 'vibe-coding',
-      voicePreset: 'system-win-h',
+    useMobileStore.getState().setSelectedEditItem({
+      kind: 'tile',
+      pageId: 'vibe-coding',
+      zoneId: 'vibe-coding-grid',
+      tileId: 'tile.continue',
     })
+    useMobileStore.getState().setTileSpan('vibe-coding', 'tile.continue', 2, 2)
+    const updatedTile = useMobileStore
+      .getState()
+      .deck.pages.find((p) => p.id === 'vibe-coding')
+      ?.tiles.find((t) => t.id === 'tile.continue')
+    expect(updatedTile?.colSpan).toBe(2)
+    expect(updatedTile?.rowSpan).toBe(2)
+
+    useMobileStore.getState().setLayoutEditing(false)
+    expect(useMobileStore.getState().selectedEditItem).toBeNull()
   })
 })

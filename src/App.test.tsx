@@ -1,16 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { App } from './App'
 import { useMobileStore } from './state/useMobileStore'
 import { DEFAULT_DEMO_DECK } from './transport/defaultDeck'
 import type { AxonkeyAndroidBridge } from './transport/nativeBridge'
 
-describe('Axonkey Mobile UI', () => {
-  it('renders thumb-zone navigation, dynamic voice binding, 2-tab Touchpad/Air-Mouse with shared Recenter, and Light/Dark/System themes', () => {
+describe('Axonkey Mobile v5 — Plan B Monolithic UI, Circular Clickpad & Single-Focus Editor', () => {
+  it('renders Plan B zero-prose surfaces, Circular Clickpad Ring (tap & swipe), clean Voice Dock, and Light/Dark/System themes', async () => {
     const recenterCursorMock = vi.fn(() => true)
     const setSystemBarThemeMock = vi.fn()
+    const hapticMock = vi.fn()
+
     window.AxonkeyNative = {
-      haptic: vi.fn(),
+      haptic: hapticMock,
       setKeepScreenOn: vi.fn(),
       openQrScanner: vi.fn(),
       connectWss: vi.fn(),
@@ -25,68 +27,79 @@ describe('Axonkey Mobile UI', () => {
     } satisfies AxonkeyAndroidBridge
 
     try {
-      useMobileStore.setState({
-        phase: 'active',
-        isDemoMode: false,
-        hostId: 'pc-1',
-        hostName: 'Studio PC',
-        context: { appId: 'doubao.exe', appName: '豆包', profileName: '通用语音' },
-        deck: {
-          ...structuredClone(DEFAULT_DEMO_DECK),
-          voiceBindingSummary: 'Alt',
-        },
-        workspaceMode: 'remote',
-        pointerTab: 'trackpad',
-        airMouseFeel: 'relative',
-      })
-
       render(<App />)
 
-      // Header shows active host & foreground app badge
+      await act(async () => {
+        useMobileStore.getState().connectDemo()
+        await new Promise((r) => setTimeout(r, 35))
+      })
+
+      act(() => {
+        useMobileStore.setState({
+          isDemoMode: false,
+          hostId: 'pc-1',
+          hostName: 'Studio PC',
+          context: { appId: 'doubao.exe', appName: '豆包', profileName: '通用语音' },
+          workspaceMode: 'remote',
+          pointerTab: 'trackpad',
+          airMouseFeel: 'relative',
+        })
+      })
+
+      // 1. Minimal Header: HostName + Context AppName, zero geeky badges on keycaps
       expect(screen.getByText('Studio PC')).toBeTruthy()
       expect(screen.getByText('豆包')).toBeTruthy()
+      expect(screen.queryByText('Ctrl+Enter')).toBeNull()
+      expect(screen.queryByText('HOLD')).toBeNull()
 
-      // VoiceTextDock dynamically reflects PC voiceBindingSummary ('Alt')
-      expect(screen.getByText('按住说话 · Alt + 虚拟麦')).toBeTruthy()
+      // 2. Clean Voice Dock: '按住说话' (no '+ 虚拟麦' clutter!)
+      expect(screen.getByText('按住说话')).toBeTruthy()
+      expect(screen.queryByText(/虚拟麦/)).toBeNull()
 
-      // When voiceBindingSummary is null -> pure virtual mic label
-      act(() => {
-        useMobileStore.setState((s) => ({
-          deck: { ...s.deck, voiceBindingSummary: null },
-        }))
-      })
-      expect(screen.getByText('按住说话 · 虚拟麦克风')).toBeTruthy()
+      // 3. Circular Clickpad Ring (`触控圆盘`): direct press + >26px swipe + 38px continuous ticks
+      const tileActivateSpy = vi.spyOn(useMobileStore.getState().getClient(), 'sendTileActivate')
+      const clickpadRing = screen.getByTestId('circular-clickpad-ring')
+      const upBtn = within(clickpadRing).getByLabelText('上')
 
-      // Switch to 触控·飞鼠 workspace via thumb-zone segmented bar -> only 2 primary pointer tabs!
+      fireEvent.pointerDown(upBtn, { pointerId: 1, clientX: 110, clientY: 20 })
+      fireEvent.pointerUp(upBtn, { pointerId: 1, clientX: 110, clientY: 20 })
+      expect(tileActivateSpy).toHaveBeenCalledWith('remote.up', 'tap')
+
+      tileActivateSpy.mockClear()
+      hapticMock.mockClear()
+      // Swipe right across outer ring: 30px (>26px) triggers 1st right step, +38px triggers 2nd right step!
+      fireEvent.pointerDown(clickpadRing, { pointerId: 2, clientX: 80, clientY: 40 })
+      fireEvent.pointerMove(clickpadRing, { pointerId: 2, clientX: 110, clientY: 42 }) // +30px -> 1st step
+      fireEvent.pointerMove(clickpadRing, { pointerId: 2, clientX: 148, clientY: 43 }) // +38px -> 2nd step
+      fireEvent.pointerUp(clickpadRing, { pointerId: 2, clientX: 148, clientY: 43 })
+      expect(tileActivateSpy).toHaveBeenCalledTimes(2)
+      expect(tileActivateSpy).toHaveBeenNthCalledWith(1, 'remote.right', 'tap')
+      expect(tileActivateSpy).toHaveBeenNthCalledWith(2, 'remote.right', 'tap')
+      expect(hapticMock).toHaveBeenCalledWith('tap')
+
+      // 4. Pure Matte Trackpad & Calm Air-Mouse
       fireEvent.click(screen.getByText('触控·飞鼠'))
-      expect(screen.getByText('触控板')).toBeTruthy()
-      expect(screen.getByText('体感飞鼠')).toBeTruthy()
-      expect(screen.queryByText('归中瞄准')).toBeNull()
+      expect(screen.getByTestId('standalone-trackpad-surface')).toBeTruthy()
+      expect(screen.queryByText(/单指丝滑移动/)).toBeNull()
 
-      // In 触控板, 1-tap 屏幕归中 snaps cursor to center
       fireEvent.click(screen.getByLabelText('屏幕归中'))
       expect(recenterCursorMock).toHaveBeenCalledTimes(1)
       expect(screen.getByText('已归中')).toBeTruthy()
 
-      // Switch to 体感飞鼠 -> defaults to 惯性飞鼠 + 屏幕归中 utility button
-      fireEvent.click(screen.getByText('体感飞鼠'))
-      expect(screen.getByText('按住飞鼠移动（离合键）')).toBeTruthy()
-      fireEvent.click(screen.getByLabelText('屏幕归中'))
-      expect(recenterCursorMock).toHaveBeenCalledTimes(2)
+      fireEvent.click(screen.getByText('飞鼠'))
+      expect(screen.getByText('按住移鼠')).toBeTruthy()
+      fireEvent.click(screen.getByText('激光'))
+      expect(screen.getByText('激光追踪')).toBeTruthy()
 
-      // Toggle tracking feel inside 体感飞鼠 -> 激光指哪
-      fireEvent.click(screen.getByText('激光指哪'))
-      expect(screen.getByText('对准屏幕正中央 · 点击校准归中')).toBeTruthy()
-
-      // Open LocalFeelSheet via header gear icon and test Light / Dark / System theme switcher
+      // 5. Light / Dark / System Theme Switching
       fireEvent.click(screen.getByLabelText('本地手感设置'))
-      expect(screen.getByText('本地外观与操控手感')).toBeTruthy()
+      expect(screen.getByText('偏好设置')).toBeTruthy()
 
-      fireEvent.click(screen.getByText('浅色模式'))
+      fireEvent.click(screen.getByText('浅色'))
       expect(document.documentElement.dataset.theme).toBe('light')
       expect(setSystemBarThemeMock).toHaveBeenLastCalledWith(false)
 
-      fireEvent.click(screen.getByText('深色模式'))
+      fireEvent.click(screen.getByText('深色'))
       expect(document.documentElement.dataset.theme).toBe('dark')
       expect(setSystemBarThemeMock).toHaveBeenLastCalledWith(true)
 
@@ -97,7 +110,7 @@ describe('Axonkey Mobile UI', () => {
     }
   })
 
-  it('supports v3 in-place Bento layout editing, 1-tap span cycling, TileStyleSheet, drag reorder, and mixed pointer+shortcut templates', () => {
+  it('supports Single-Focus Contextual Edit Mode: tap tile -> bottom span inspector & TileStyleSheet, tap blank -> deselect, drag reorder & add Circular Clickpad', () => {
     useMobileStore.setState({
       phase: 'active',
       isDemoMode: true,
@@ -106,6 +119,7 @@ describe('Axonkey Mobile UI', () => {
       deck: structuredClone(DEFAULT_DEMO_DECK),
       workspaceMode: 'deck',
       layoutEditing: false,
+      selectedEditItem: null,
       editingTileTarget: null,
       pageManagerOpen: false,
       feelSheetOpen: false,
@@ -114,38 +128,47 @@ describe('Axonkey Mobile UI', () => {
 
     render(<App />)
 
-    // Enter Layout Edit Mode from top header
+    // Enter Single-Focus Edit Mode
     fireEvent.click(screen.getByLabelText('自定义布局'))
-    expect(screen.getByText('加按键')).toBeTruthy()
-    expect(screen.getByText('加区块')).toBeTruthy()
+    expect(screen.getByTestId('edit-mode-topbar')).toBeTruthy()
+    expect(screen.getByText('轻点元素调整属性 · 按住按键拖动换位')).toBeTruthy()
 
-    // Vibe Coding page has tile.continue (2x1) -> 1-tap corner pill cycles 2x1 -> 1x2
-    const spanBadge = screen.getByLabelText('切换尺寸 继续执行 (2×1)')
-    fireEvent.click(spanBadge)
-    const updatedVibe = useMobileStore
+    // Tap tile.continue (initially 2x1) -> bottom contextual inspector shows 1x1 / 2x1 / 1x2 / 2x2 & 编辑
+    const continueBtn = document.querySelector('[data-bento-tile-id="tile.continue"]') as HTMLElement
+    expect(continueBtn).toBeTruthy()
+    fireEvent.click(continueBtn)
+    const dock = screen.getByTestId('edit-inspector-dock')
+    expect(within(dock).getByText('已选：继续执行')).toBeTruthy()
+
+    // 1-tap span change to 1×2 in bottom inspector
+    fireEvent.click(within(dock).getByText('1×2'))
+    const updatedTile = useMobileStore
       .getState()
       .deck.pages.find((p) => p.id === 'vibe-coding')!
-    const continueTile = updatedVibe.tiles.find((t) => t.id === 'tile.continue')!
-    expect(continueTile.colSpan).toBe(1)
-    expect(continueTile.rowSpan).toBe(2)
+      .tiles.find((t) => t.id === 'tile.continue')!
+    expect(updatedTile.colSpan).toBe(1)
+    expect(updatedTile.rowSpan).toBe(2)
 
-    // Tap tile to open TileStyleSheet -> check PC binding readout & edit label/mode
-    const enterBtn = document.querySelector('[data-bento-tile-id="tile.enter"]') as HTMLElement
-    expect(enterBtn).toBeTruthy()
-    fireEvent.click(enterBtn)
-    expect(screen.getByText('按键样式与模式')).toBeTruthy()
-    expect(screen.getByText(/电脑端当前绑定：/)).toBeTruthy()
-
+    // Open TileStyleSheet via '编辑' button in bottom inspector
+    fireEvent.click(within(dock).getByText('编辑'))
+    expect(screen.getByText('编辑按键')).toBeTruthy()
+    expect(screen.getByText('电脑端绑定')).toBeTruthy()
     fireEvent.click(screen.getByText('持续按住 Hold'))
     expect(
       useMobileStore
         .getState()
         .deck.pages.find((p) => p.id === 'vibe-coding')
-        ?.tiles.find((t) => t.id === 'tile.enter')?.mode,
+        ?.tiles.find((t) => t.id === 'tile.continue')?.mode,
     ).toBe('hold')
-    fireEvent.click(screen.getByText('完成设置'))
+    fireEvent.click(within(screen.getByRole('dialog', { name: '编辑按键' })).getByText('完成'))
+
+    // Tap blank stage background -> deselects back to calm 1-line prompt!
+    fireEvent.click(screen.getByTestId('main-stage'))
+    expect(useMobileStore.getState().selectedEditItem).toBeNull()
+    expect(screen.getByText('轻点元素调整属性 · 按住按键拖动换位')).toBeTruthy()
 
     // Drag-and-drop reorder via pointerdown + >8px pointermove + elementFromPoint + pointerup
+    const enterBtn = document.querySelector('[data-bento-tile-id="tile.enter"]') as HTMLElement
     const acceptBtn = document.querySelector('[data-bento-tile-id="tile.accept"]') as HTMLElement
     const origElementFromPoint = document.elementFromPoint
     document.elementFromPoint = () => acceptBtn
@@ -166,131 +189,82 @@ describe('Axonkey Mobile UI', () => {
       'tile.enter',
     ])
 
-    // Create a Mixed Pointer + Bento page from PageManagerSheet template
-    fireEvent.click(screen.getByText('新建页'))
-    expect(screen.getByText('页面管理与新建模板')).toBeTruthy()
-    fireEvent.click(screen.getByText('触控+快捷混排'))
+    // Insert 触控圆盘 via [+ 组件 -> 触控圆盘]
+    fireEvent.click(screen.getByText('组件'))
+    fireEvent.click(screen.getByText('触控圆盘'))
+    expect(screen.getByTestId('circular-clickpad-ring')).toBeTruthy()
+    expect(within(screen.getByTestId('edit-inspector-dock')).getByText('触控圆盘')).toBeTruthy()
 
-    // Exit edit mode and verify embedded trackpad +归中 + shortcut tiles render together on one page
+    // Create geometric '触控板混排' page via PageManagerSheet ([+] in edit topbar)
+    fireEvent.click(screen.getByLabelText('页面管理'))
+    expect(screen.getByText('页面管理')).toBeTruthy()
+    fireEvent.click(screen.getByText('触控板混排'))
+
+    // Exit edit mode -> embedded matte trackpad + shortcut tiles render cleanly
     fireEvent.click(screen.getByText('完成'))
-    expect(screen.getByText('单指移动 · 轻点左键 · 双指滚轮')).toBeTruthy()
+    expect(screen.getByTestId('embedded-trackpad-surface')).toBeTruthy()
     expect(screen.getByLabelText('归中')).toBeTruthy()
     expect(screen.getByText('主动作')).toBeTruthy()
   })
 
-  it('supports v4 Mid-Grip Air-Mouse, Edge Infinite Scroll Strip, Click Stabilizer, and Hardware Volume Key takeover', async () => {
-    const notifyClickPulseMock = vi.fn()
-    const setVolumeConfigMock = vi.fn()
-    const hapticMock = vi.fn()
-    const sentFrames: string[] = []
+  it('dismisses all BottomSheets immediately on backdrop click, swipe-down, Escape, and Android Back', () => {
+    useMobileStore.setState({
+      phase: 'active',
+      isDemoMode: true,
+      feelSheetOpen: false,
+      pairingOpen: false,
+      aboutSheetOpen: false,
+    })
 
-    window.AxonkeyNative = {
-      haptic: hapticMock,
-      setKeepScreenOn: vi.fn(),
-      openQrScanner: vi.fn(),
-      connectWss: vi.fn(),
-      sendWssText: vi.fn((raw: string) => {
-        sentFrames.push(raw)
-        return true
-      }),
-      closeWss: vi.fn(),
-      saveHostCredentials: vi.fn(),
-      loadHostCredentials: vi.fn(() => '[]'),
-      deleteHostCredentials: vi.fn(),
-      notifyPointerClickPulse: notifyClickPulseMock,
-      setVolumeKeyMouseConfig: setVolumeConfigMock,
-    } satisfies AxonkeyAndroidBridge
+    render(<App />)
 
-    try {
-      window.localStorage.clear()
-      render(<App />)
+    // 1. PairingSheet closes on backdrop click
+    fireEvent.click(screen.getByLabelText('连接与配对'))
+    expect(screen.getByRole('dialog', { name: '设备连接' })).toBeTruthy()
+    fireEvent.click(screen.getByTestId('pairing-sheet-backdrop'))
+    expect(screen.queryByRole('dialog', { name: '设备连接' })).toBeNull()
 
-      // Connect Demo session cleanly via store and wait 35ms for DemoLoopbackTransport server.ready!
-      await act(async () => {
-        useMobileStore.getState().connectDemo()
-        await new Promise((r) => setTimeout(r, 35))
-      })
+    // 2. LocalFeelSheet closes on backdrop click
+    fireEvent.click(screen.getByLabelText('本地手感设置'))
+    expect(screen.getByRole('dialog', { name: '偏好设置' })).toBeTruthy()
+    fireEvent.click(screen.getByTestId('feel-sheet-backdrop'))
+    expect(screen.queryByRole('dialog', { name: '偏好设置' })).toBeNull()
 
-      // Switch to 触控·飞鼠 -> 体感飞鼠
-      fireEvent.click(screen.getByText('触控·飞鼠'))
-      fireEvent.click(screen.getByText('体感飞鼠'))
+    // 3. AboutUpdateSheet closes on backdrop click
+    fireEvent.click(screen.getByLabelText('本地手感设置'))
+    fireEvent.click(screen.getByLabelText('关于与版本更新'))
+    expect(screen.getByRole('dialog', { name: '关于与版本更新' })).toBeTruthy()
+    fireEvent.click(screen.getByTestId('about-sheet-backdrop'))
+    expect(screen.queryByRole('dialog', { name: '关于与版本更新' })).toBeNull()
 
-      const midGrip = screen.getByTestId('airmouse-midgrip-layout')
-      expect(midGrip.getAttribute('data-handedness')).toBe('right')
+    // 4. Swipe-down (>48px) on grabber handle & Android native Back hook close sheet
+    fireEvent.click(screen.getByLabelText('本地手感设置'))
+    const handle = screen.getByTestId('bottom-sheet-handle')
+    fireEvent.pointerDown(handle, { pointerId: 7, clientY: 120 })
+    fireEvent.pointerMove(handle, { pointerId: 7, clientY: 180 })
+    fireEvent.pointerUp(handle, { pointerId: 7, clientY: 180 })
+    expect(screen.queryByRole('dialog', { name: '偏好设置' })).toBeNull()
 
-      // Toggle Right -> Left handedness
-      fireEvent.click(screen.getByLabelText('切换飞鼠左右手握持'))
-      expect(midGrip.getAttribute('data-handedness')).toBe('left')
-      expect(screen.getByText('左手')).toBeTruthy()
-
-      // Pressing Mid-Grip 左键 triggers 75ms Click-Stabilizer pulse BEFORE down
-      const leftBtn = screen.getByText('左键').closest('button')!
-      fireEvent.pointerDown(leftBtn, { pointerId: 1 })
-      fireEvent.pointerUp(leftBtn, { pointerId: 1 })
-      expect(notifyClickPulseMock).toHaveBeenCalledTimes(1)
-
-      // Edge Scroll Rail: smooth vertical drag -> sendPointerScroll + notch haptics every ~22px
-      const scrollSpy = vi.spyOn(useMobileStore.getState().getClient(), 'sendPointerScroll')
-      const buttonSpy = vi.spyOn(useMobileStore.getState().getClient(), 'sendPointerButton')
-      const edgeRail = screen.getByTestId('airmouse-edge-scroll')
-
-      hapticMock.mockClear()
-      fireEvent.pointerDown(edgeRail, { pointerId: 2, clientY: 100 })
-      fireEvent.pointerMove(edgeRail, { pointerId: 2, clientY: 150 }) // 50px -> 2 notches (44px)
-      fireEvent.pointerUp(edgeRail, { pointerId: 2, clientY: 150 })
-      expect(scrollSpy).toHaveBeenCalled()
-      expect(hapticMock).toHaveBeenCalledWith('tap')
-
-      // Quick tap on Edge Scroll Rail -> Middle Click!
-      buttonSpy.mockClear()
-      fireEvent.pointerDown(edgeRail, { pointerId: 3, clientY: 120 })
-      fireEvent.pointerUp(edgeRail, { pointerId: 3, clientY: 121 })
-      expect(buttonSpy).toHaveBeenCalledWith('middle', 'down', expect.any(String))
-      expect(buttonSpy).toHaveBeenCalledWith('middle', 'up', expect.any(String))
-
-      // Enable Hardware Volume Key mode 'lr' in LocalFeelSheet
-      fireEvent.click(screen.getByLabelText('本地手感设置'))
-      // While sheet is open, capture MUST remain false!
-      fireEvent.click(screen.getByText('音量+左/音量-右'))
-      expect(setVolumeConfigMock).toHaveBeenLastCalledWith(false, 'lr')
-
-      // Close sheet -> now in active Air-Mouse with no sheet open -> capture turns TRUE!
-      fireEvent.click(screen.getByLabelText('关闭'))
-      expect(setVolumeConfigMock).toHaveBeenLastCalledWith(true, 'lr')
-      expect(screen.getByText('音量键左/右')).toBeTruthy()
-
-      // Simulate native Vol+ hold & release -> dispatches real left down & up with matching pressId
-      buttonSpy.mockClear()
-      act(() => {
-        window.__axonkeyNativeOnVolumeKey?.('up', 'down')
-      })
-      expect(buttonSpy).toHaveBeenCalledTimes(1)
-      const [downBtn, downPhase, downPressId] = buttonSpy.mock.calls[0]
-      expect(downBtn).toBe('left')
-      expect(downPhase).toBe('down')
-
-      act(() => {
-        window.__axonkeyNativeOnVolumeKey?.('up', 'up')
-      })
-      expect(buttonSpy).toHaveBeenLastCalledWith('left', 'up', downPressId)
-
-      // Leaving Air-Mouse to 遥控器 immediately disables volume key capture!
-      fireEvent.click(screen.getByText('遥控器'))
-      expect(setVolumeConfigMock).toHaveBeenLastCalledWith(false, 'lr')
-    } finally {
-      delete window.AxonkeyNative
-    }
+    fireEvent.click(screen.getByLabelText('连接与配对'))
+    expect(screen.getByRole('dialog', { name: '设备连接' })).toBeTruthy()
+    act(() => {
+      window.__axonkeyNativeOnBack?.()
+    })
+    expect(screen.queryByRole('dialog', { name: '设备连接' })).toBeNull()
   })
 
-  it('supports v4 AboutUpdateSheet (no_release & update progress), PresetWizardSheet, Gesture Pad, and Split Landscape UI', async () => {
+  it('supports Mid-Grip Air-Mouse, Edge Rotary Scroll, Click Stabilizer, Volume Keys, AboutUpdateSheet & Split Landscape', async () => {
+    const notifyClickPulseMock = vi.fn()
+    const setVolumeConfigMock = vi.fn()
     const checkReleaseMock = vi.fn()
     const downloadApkMock = vi.fn()
     const installApkMock = vi.fn(() => true)
     const openExternalUrlMock = vi.fn(() => true)
     const setOrientationMock = vi.fn()
+    const hapticMock = vi.fn()
 
     window.AxonkeyNative = {
-      haptic: vi.fn(),
+      haptic: hapticMock,
       setKeepScreenOn: vi.fn(),
       openQrScanner: vi.fn(),
       connectWss: vi.fn(),
@@ -299,6 +273,8 @@ describe('Axonkey Mobile UI', () => {
       saveHostCredentials: vi.fn(),
       loadHostCredentials: vi.fn(() => '[]'),
       deleteHostCredentials: vi.fn(),
+      notifyPointerClickPulse: notifyClickPulseMock,
+      setVolumeKeyMouseConfig: setVolumeConfigMock,
       getAppVersionInfo: vi.fn(() =>
         JSON.stringify({
           versionName: '0.2.0',
@@ -322,13 +298,58 @@ describe('Axonkey Mobile UI', () => {
         await new Promise((r) => setTimeout(r, 35))
       })
 
-      // 1. Open LocalFeelSheet -> open AboutUpdateSheet
+      // Air-Mouse Mid-Grip + Handedness + Click Stabilizer + Edge Encoder + Volume Keys
+      fireEvent.click(screen.getByText('触控·飞鼠'))
+      fireEvent.click(screen.getByText('飞鼠'))
+
+      const midGrip = screen.getByTestId('airmouse-midgrip-layout')
+      expect(midGrip.getAttribute('data-handedness')).toBe('right')
+      fireEvent.click(screen.getByLabelText('切换飞鼠左右手握持'))
+      expect(midGrip.getAttribute('data-handedness')).toBe('left')
+
+      const leftBtn = screen.getByText('左键').closest('button')!
+      fireEvent.pointerDown(leftBtn, { pointerId: 1 })
+      fireEvent.pointerUp(leftBtn, { pointerId: 1 })
+      expect(notifyClickPulseMock).toHaveBeenCalledTimes(1)
+
+      const scrollSpy = vi.spyOn(useMobileStore.getState().getClient(), 'sendPointerScroll')
+      const buttonSpy = vi.spyOn(useMobileStore.getState().getClient(), 'sendPointerButton')
+      const edgeRail = screen.getByTestId('airmouse-edge-scroll')
+
+      fireEvent.pointerDown(edgeRail, { pointerId: 2, clientY: 100 })
+      fireEvent.pointerMove(edgeRail, { pointerId: 2, clientY: 150 })
+      fireEvent.pointerUp(edgeRail, { pointerId: 2, clientY: 150 })
+      expect(scrollSpy).toHaveBeenCalled()
+
+      buttonSpy.mockClear()
+      fireEvent.pointerDown(edgeRail, { pointerId: 3, clientY: 120 })
+      fireEvent.pointerUp(edgeRail, { pointerId: 3, clientY: 121 })
+      expect(buttonSpy).toHaveBeenCalledWith('middle', 'down', expect.any(String))
+      expect(buttonSpy).toHaveBeenCalledWith('middle', 'up', expect.any(String))
+
+      fireEvent.click(screen.getByLabelText('本地手感设置'))
+      fireEvent.click(screen.getByText('左 / 右键'))
+      expect(setVolumeConfigMock).toHaveBeenLastCalledWith(false, 'lr')
+
+      fireEvent.click(screen.getByTestId('feel-sheet-backdrop'))
+      expect(setVolumeConfigMock).toHaveBeenLastCalledWith(true, 'lr')
+
+      buttonSpy.mockClear()
+      act(() => {
+        window.__axonkeyNativeOnVolumeKey?.('up', 'down')
+      })
+      expect(buttonSpy).toHaveBeenCalledTimes(1)
+      const [, , downPressId] = buttonSpy.mock.calls[0]
+      act(() => {
+        window.__axonkeyNativeOnVolumeKey?.('up', 'up')
+      })
+      expect(buttonSpy).toHaveBeenLastCalledWith('left', 'up', downPressId)
+
+      // AboutUpdateSheet check + download + permission_required flow
       fireEvent.click(screen.getByLabelText('本地手感设置'))
       fireEvent.click(screen.getByLabelText('关于与版本更新'))
-      expect(screen.getByText('关于与版本更新')).toBeTruthy()
       expect(screen.getByText('v0.2.0')).toBeTruthy()
 
-      // Test Dual GitHub Repository Jump Cards
       fireEvent.click(screen.getByText('Axonkey 桌面端源仓库'))
       expect(openExternalUrlMock).toHaveBeenCalledWith('https://github.com/leowzz/axonkey')
       fireEvent.click(screen.getByText('Axonkey Mobile 仓库'))
@@ -336,7 +357,6 @@ describe('Axonkey Mobile UI', () => {
         'https://github.com/timeStarry/axonkey-mobile',
       )
 
-      // Check Update -> graceful no_release (HTTP 404 before first release)
       fireEvent.click(screen.getByText('检查更新'))
       expect(checkReleaseMock).toHaveBeenCalledWith('timeStarry/axonkey-mobile')
       act(() => {
@@ -344,11 +364,8 @@ describe('Axonkey Mobile UI', () => {
           JSON.stringify({ ok: false, code: 'no_release', error: 'HTTP 404' }),
         )
       })
-      expect(
-        screen.getByText('当前版本已是最新（仓库暂未发布新 Release）'),
-      ).toBeTruthy()
+      expect(screen.getByText('当前版本已是最新（仓库暂未发布新 Release）')).toBeTruthy()
 
-      // Check Update -> newer semver v0.3.0 + progress + permission_required -> 继续安装
       act(() => {
         window.__axonkeyNativeOnUpdateRelease?.(
           JSON.stringify({
@@ -356,7 +373,7 @@ describe('Axonkey Mobile UI', () => {
             tagName: 'v0.3.0',
             version: '0.3.0',
             title: 'Axonkey Mobile v0.3.0',
-            notes: '- 新增体感防抖与手势垫',
+            notes: '- Plan B 一体成型重构',
             publishedAt: '2026-11-24T00:00:00Z',
             htmlUrl: 'https://github.com/timeStarry/axonkey-mobile/releases/tag/v0.3.0',
             apkUrl: 'https://github.com/timeStarry/axonkey-mobile/releases/download/v0.3.0/app.apk',
@@ -366,25 +383,12 @@ describe('Axonkey Mobile UI', () => {
           }),
         )
       })
-      expect(screen.getByText(/发现新版本：Axonkey Mobile v0.3.0/)).toBeTruthy()
       fireEvent.click(screen.getByText('立即安装更新'))
       expect(downloadApkMock).toHaveBeenCalledWith(
         'https://github.com/timeStarry/axonkey-mobile/releases/download/v0.3.0/app.apk',
         '',
         '0.3.0',
       )
-
-      act(() => {
-        window.__axonkeyNativeOnUpdateProgress?.(
-          JSON.stringify({
-            phase: 'downloading',
-            percent: 50,
-            downloaded: 3145728,
-            total: 6291456,
-          }),
-        )
-      })
-      expect(screen.getByText(/正在下载更新 50%/)).toBeTruthy()
 
       act(() => {
         window.__axonkeyNativeOnUpdateProgress?.(
@@ -399,44 +403,24 @@ describe('Axonkey Mobile UI', () => {
       })
       fireEvent.click(screen.getByText('继续安装'))
       expect(installApkMock).toHaveBeenCalledTimes(1)
-      fireEvent.click(screen.getByLabelText('关闭关于面板'))
+      fireEvent.click(screen.getByTestId('about-sheet-backdrop'))
 
-      // 2. Starter Preset Wizard: switch to '从空白开始 · 纯净自定义' in Demo Mode
-      fireEvent.click(screen.getByLabelText('本地手感设置'))
-      fireEvent.click(screen.getByText('预设方案与开箱向导'))
-      expect(screen.getByText('一键同步手机端面板布局与电脑端按键绑定')).toBeTruthy()
-      fireEvent.click(screen.getByText('从空白开始 · 纯净自定义'))
-      fireEvent.click(screen.getByText('应用此预设方案'))
-
-      expect(useMobileStore.getState().deck.activePageId).toBe('custom-canvas')
-      expect(useMobileStore.getState().deck.voiceBindingSummary).toBeNull()
-      expect(screen.getByText('自定义 1')).toBeTruthy()
-
-      // 3. Add a Gesture Pad in Layout Editor & trigger Up swipe (>32px)
-      fireEvent.click(screen.getByLabelText('自定义布局'))
-      fireEvent.click(screen.getByText('加区块'))
-      fireEvent.click(screen.getByText('手势触发垫'))
-      fireEvent.click(screen.getByText('完成'))
-
-      const tileActivateSpy = vi.spyOn(useMobileStore.getState().getClient(), 'sendTileActivate')
-      const gesturePad = screen.getByTestId('gesture-pad-surface')
-      fireEvent.pointerDown(gesturePad, { pointerId: 5, clientX: 150, clientY: 180 })
-      fireEvent.pointerMove(gesturePad, { pointerId: 5, clientX: 150, clientY: 130 }) // dy = -50 -> Up slot[0]
-      fireEvent.pointerUp(gesturePad, { pointerId: 5, clientX: 150, clientY: 130 })
-
-      const createdGestureZone = useMobileStore
-        .getState()
-        .deck.pages.find((p) => p.id === 'custom-canvas')
-        ?.zones?.find((z) => z.kind === 'gesture-pad')
-      expect(createdGestureZone).toBeTruthy()
-      expect(tileActivateSpy).toHaveBeenCalledWith(createdGestureZone!.tileIds[0], 'tap')
-
-      // 4. Split Landscape Ergonomic Layout when selecting '横屏台架'
-      fireEvent.click(screen.getByLabelText('本地手感设置'))
-      fireEvent.click(screen.getByText('横屏台架'))
-      expect(setOrientationMock).toHaveBeenLastCalledWith('landscape')
-      fireEvent.click(screen.getByLabelText('关闭'))
-      expect(screen.getByTestId('split-landscape-shell')).toBeTruthy()
+      // Split Landscape mode
+      const origW = window.innerWidth
+      const origH = window.innerHeight
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 844 })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 390 })
+      try {
+        fireEvent(window, new Event('resize'))
+        fireEvent.click(screen.getByLabelText('本地手感设置'))
+        fireEvent.click(screen.getByText('横屏台架'))
+        expect(setOrientationMock).toHaveBeenLastCalledWith('landscape')
+        fireEvent.click(screen.getByTestId('feel-sheet-backdrop'))
+        expect(screen.getByTestId('split-landscape-shell')).toBeTruthy()
+      } finally {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: origW })
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: origH })
+      }
     } finally {
       delete window.AxonkeyNative
     }

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { CornerDownLeft, Keyboard, Mic, Send, X } from 'lucide-react'
+import { CornerDownLeft, Keyboard, Mic, Send } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { TextCommitMode } from '../protocol/types'
 import { useMobileStore } from '../state/useMobileStore'
 import { isNativeShell, triggerHaptic } from '../transport/nativeBridge'
 
-const WAVE_WEIGHTS = [0.3, 0.48, 0.68, 0.86, 0.96, 1.0, 0.96, 0.86, 0.68, 0.48, 0.3]
+const WAVE_WEIGHTS = [0.35, 0.6, 0.88, 1.0, 0.88, 0.6, 0.35]
 const CANCEL_SLIDE_PX = 42
 
 interface VoiceTextDockProps {
@@ -20,7 +20,6 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
   const getClient = useMobileStore((s) => s.getClient)
   const phase = useMobileStore((s) => s.phase)
   const isDemoMode = useMobileStore((s) => s.isDemoMode)
-  const voiceBindingSummary = useMobileStore((s) => s.deck.voiceBindingSummary)
   const voiceLevel = useMobileStore((s) => s.voiceLevel)
   const delivery = useMobileStore((s) => s.textDelivery)
 
@@ -40,7 +39,6 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
   const connected = phase === 'active'
   const sendDisabled = !connected || !text.trim()
 
-  // Abort active voice cleanly if session drops while holding
   useEffect(() => {
     if (!connected && recordingRef.current) {
       recordingRef.current = false
@@ -51,7 +49,6 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
     }
   }, [connected, getClient])
 
-  // Gentle organic level animation in Demo / non-native preview so waveform is verifiable visually
   useEffect(() => {
     if (!recording || (!isDemoMode && isNativeShell())) return
     let tick = 0
@@ -66,11 +63,6 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
 
   const effectiveLevel =
     !isDemoMode && isNativeShell() ? Math.max(0.08, voiceLevel) : Math.max(0.12, simLevel)
-
-  const bindingTrimmed = voiceBindingSummary?.trim() || null
-  const idleVoiceLabel = bindingTrimmed
-    ? `按住说话 · ${bindingTrimmed} + 虚拟麦`
-    : '按住说话 · 虚拟麦克风'
 
   const handleSendText = (submit: boolean) => {
     if (sendDisabled) return
@@ -134,20 +126,18 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
     }
   }
 
-  // Split Landscape Thumb-Zone Dock (fits cleanly inside Left Control Rail w-[208px])
   if (compactLandscape) {
     return (
-      <div className="mt-auto pt-2 border-t ak-border space-y-1.5">
+      <div className="mt-auto pt-2 border-t ak-border-subtle space-y-1.5">
         {dockMode === 'voice' ? (
           <div className="flex items-stretch gap-1.5">
             <button
               type="button"
               onClick={toggleDockMode}
               aria-label="切换到键盘输入"
-              className="tile-surface ak-elevated ak-text-2 w-10 rounded-2xl border inline-flex flex-col items-center justify-center gap-0.5 shrink-0 touch-none"
+              className="tile-surface ak-elevated ak-text-2 w-10 h-11 rounded-[16px] border inline-flex items-center justify-center shrink-0 touch-none"
             >
-              <Keyboard className="w-3.5 h-3.5" />
-              <span className="text-[9px] ak-text-3">键盘</span>
+              <Keyboard className="w-4 h-4" />
             </button>
 
             <button
@@ -161,30 +151,32 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
               onPointerUp={() => finishHoldVoice(false)}
               onPointerCancel={() => finishHoldVoice(true)}
               className={clsx(
-                'relative flex-1 min-h-[54px] px-2.5 py-1.5 rounded-2xl border text-xs font-semibold flex flex-col items-center justify-center gap-0.5 select-none touch-none transition-all overflow-hidden text-center',
+                'relative flex-1 h-11 px-2.5 rounded-[16px] border text-xs font-semibold inline-flex items-center justify-center gap-1.5 select-none touch-none transition-all',
                 !connected
                   ? 'ak-pill ak-text-3 opacity-80'
                   : canceling
-                    ? 'bg-amber-500 text-white border-amber-600'
+                    ? 'bg-rose-500 text-white border-rose-500'
                     : recording
-                      ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                      ? 'ak-primary-solid'
                       : 'tile-surface ak-voice-idle',
               )}
             >
-              <div className="inline-flex items-center gap-1">
-                <Mic className="w-3.5 h-3.5 shrink-0" />
-                <span className="font-bold truncate max-w-[110px]">
-                  {!connected
-                    ? '未连接语音'
-                    : canceling
-                      ? '松手取消'
-                      : recording
-                        ? '松开发送'
-                        : '按住说话'}
-                </span>
-              </div>
-              <span className="text-[9.5px] opacity-80 truncate max-w-[120px]">
-                {bindingTrimmed ? `${bindingTrimmed} + 虚拟麦` : '虚拟麦克风'}
+              {connected && !canceling && (
+                <span
+                  className={clsx(
+                    'w-1.5 h-1.5 rounded-full shrink-0',
+                    recording ? 'bg-current animate-pulse' : 'ak-live-dot',
+                  )}
+                />
+              )}
+              <span className="truncate">
+                {!connected
+                  ? '未连接'
+                  : canceling
+                    ? '松开取消'
+                    : recording
+                      ? '正在聆听 · 松开发送'
+                      : '按住说话'}
               </span>
             </button>
           </div>
@@ -201,15 +193,15 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
                   handleSendText(true)
                 }
               }}
-              placeholder="输入直达电脑…"
-              className="ak-input w-full h-9 px-2.5 rounded-xl border text-xs focus:outline-none focus:border-blue-500"
+              placeholder="输入文字…"
+              className="ak-input w-full h-9 px-2.5 rounded-[14px] border text-xs focus:outline-none"
             />
             <div className="grid grid-cols-4 gap-1">
               <button
                 type="button"
                 onClick={toggleDockMode}
                 aria-label="切换到按住说话"
-                className="tile-surface ak-elevated ak-text-2 h-8 rounded-lg border inline-flex items-center justify-center"
+                className="tile-surface ak-elevated ak-text-2 h-8 rounded-[12px] border inline-flex items-center justify-center"
               >
                 <Mic className="w-3.5 h-3.5" />
               </button>
@@ -220,7 +212,7 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
                   setTextMode((m) => (m === 'paste' ? 'type' : 'paste'))
                 }}
                 aria-label="切换文本注入方式"
-                className="tile-surface ak-elevated ak-text-2 h-8 rounded-lg border text-[10px] font-semibold"
+                className="tile-surface ak-elevated ak-text-2 h-8 rounded-[12px] border text-[10px] font-medium"
               >
                 {textMode === 'paste' ? '粘贴' : '键入'}
               </button>
@@ -229,7 +221,7 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
                 disabled={sendDisabled}
                 onClick={() => handleSendText(false)}
                 aria-label="仅发送文本"
-                className="tile-surface ak-elevated ak-text-1 h-8 rounded-lg border disabled:opacity-40 inline-flex items-center justify-center"
+                className="tile-surface ak-elevated ak-text-1 h-8 rounded-[12px] border disabled:opacity-40 inline-flex items-center justify-center"
               >
                 <Send className="w-3.5 h-3.5" />
               </button>
@@ -238,7 +230,7 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
                 disabled={sendDisabled}
                 onClick={() => handleSendText(true)}
                 aria-label="发送并回车"
-                className="h-8 rounded-lg bg-blue-600 text-white disabled:opacity-40 inline-flex items-center justify-center"
+                className="ak-primary-solid h-8 rounded-[12px] border disabled:opacity-40 inline-flex items-center justify-center"
               >
                 <CornerDownLeft className="w-3.5 h-3.5" />
               </button>
@@ -250,51 +242,34 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
   }
 
   return (
-    <div className="ak-dock shrink-0 px-3 pt-1.5 safe-bottom">
+    <div className="ak-dock shrink-0 px-3.5 pt-1 safe-bottom">
       {delivery &&
         delivery.status !== 'ok' &&
         delivery.status !== 'sent' &&
         dockMode === 'text' && (
           <div
             className={clsx(
-              'mb-1.5 px-2.5 py-1 rounded-lg border text-[11px] truncate',
+              'mb-1.5 px-2.5 py-1 rounded-xl border text-[11px] truncate',
               isLight
-                ? 'bg-amber-500/15 border-amber-500/35 text-amber-900'
+                ? 'bg-amber-500/12 border-amber-500/30 text-amber-900'
                 : 'bg-amber-500/15 border-amber-400/25 text-amber-200',
             )}
           >
-            {delivery.message ?? '文本发送状态未知'}
+            {delivery.message ?? '发送状态未知'}
           </div>
         )}
 
-      <div className="flex items-center gap-2.5">
-        {/* Seamless Voice <-> Keyboard Toggle (Enlarged Blind-Touch Pad) */}
+      <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={toggleDockMode}
           aria-label={dockMode === 'voice' ? '切换到键盘输入' : '切换到按住说话'}
-          className={clsx(
-            'tile-surface rounded-[20px] inline-flex flex-col items-center justify-center gap-0.5 border shrink-0 touch-none',
-            dockMode === 'voice'
-              ? 'h-[60px] w-[58px] ak-elevated ak-text-2'
-              : clsx(
-                  'h-[54px] w-[54px]',
-                  isLight
-                    ? 'bg-blue-600/12 border-blue-500/40 text-blue-700'
-                    : 'bg-blue-500/20 border-blue-400/45 text-blue-200',
-                ),
-          )}
+          className="tile-surface ak-elevated ak-text-2 h-[52px] w-[48px] rounded-[18px] border inline-flex items-center justify-center shrink-0 touch-none"
         >
           {dockMode === 'voice' ? (
-            <>
-              <Keyboard className="w-[18px] h-[18px]" />
-              <span className="text-[10px] font-medium ak-text-3">键盘</span>
-            </>
+            <Keyboard className="w-4 h-4" />
           ) : (
-            <>
-              <Mic className="w-[18px] h-[18px]" />
-              <span className="text-[10px] font-semibold">语音</span>
-            </>
+            <Mic className="w-4 h-4" />
           )}
         </button>
 
@@ -310,72 +285,43 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
             onPointerUp={() => finishHoldVoice(false)}
             onPointerCancel={() => finishHoldVoice(true)}
             className={clsx(
-              'relative flex-1 h-[60px] px-4 rounded-[20px] border text-sm font-semibold inline-flex items-center justify-center gap-3 select-none touch-none transition-all overflow-hidden',
+              'relative flex-1 h-[52px] px-4 rounded-[18px] border text-[13px] font-semibold inline-flex items-center justify-center gap-2.5 select-none touch-none transition-all overflow-hidden',
               !connected
                 ? 'ak-pill ak-text-3 opacity-80'
                 : canceling
-                  ? isLight
-                    ? 'bg-amber-500 text-white border-amber-600 scale-[0.985]'
-                    : 'bg-amber-500/25 border-amber-400/65 text-amber-100 scale-[0.985]'
+                  ? 'bg-rose-500 text-white border-rose-500 scale-[0.985]'
                   : recording
-                    ? isLight
-                      ? 'bg-blue-600 text-white border-blue-700 shadow-[0_6px_22px_rgba(37,99,235,0.35)] scale-[0.985]'
-                      : 'bg-gradient-to-r from-blue-600/40 via-indigo-500/40 to-blue-600/40 border-blue-400/80 text-white shadow-[0_0_26px_rgba(59,130,246,0.4)] scale-[0.985]'
+                    ? 'ak-primary-solid scale-[0.985]'
                     : 'tile-surface ak-voice-idle',
             )}
           >
             {!connected ? (
-              <>
-                <Mic className="w-4.5 h-4.5 ak-text-3" />
-                <span>连接电脑后启用语音键</span>
-              </>
+              <span>未连接</span>
             ) : canceling ? (
-              <>
-                <X className={clsx('w-5 h-5', isLight ? 'text-white' : 'text-amber-300')} />
-                <span>松开手指 · 立即取消本次语音</span>
-              </>
+              <span>松开取消</span>
             ) : recording ? (
               <>
-                {/* Live 11-Bar Symmetric Audio Waveform */}
-                <div className="flex items-center gap-[3px] h-6" aria-hidden="true">
+                <div className="flex items-center gap-[2.5px] h-4" aria-hidden="true">
                   {WAVE_WEIGHTS.map((w, idx) => {
                     const barHeight = Math.max(
-                      5,
-                      Math.round(24 * Math.min(1, effectiveLevel * w * 1.25)),
+                      4,
+                      Math.round(16 * Math.min(1, effectiveLevel * w * 1.25)),
                     )
                     return (
                       <span
                         key={idx}
                         style={{ height: `${barHeight}px` }}
-                        className={clsx(
-                          'w-[3.5px] rounded-full transition-[height] duration-75',
-                          isLight ? 'bg-white' : 'bg-blue-300',
-                        )}
+                        className="w-[2.5px] rounded-full bg-current transition-[height] duration-75"
                       />
                     )
                   })}
                 </div>
-                <span className="text-[13.5px] truncate">
-                  {bindingTrimmed
-                    ? `${bindingTrimmed} 按住中 · 松开发送`
-                    : '录音中 · 松开发送（上滑取消）'}
-                </span>
+                <span>正在聆听 · 松开发送</span>
               </>
             ) : (
               <>
-                <span
-                  className={clsx(
-                    'w-8 h-8 rounded-xl border inline-flex items-center justify-center shrink-0',
-                    isLight
-                      ? 'bg-blue-600/12 border-blue-500/25 text-blue-600'
-                      : 'bg-blue-500/22 border-blue-400/25 text-blue-300',
-                  )}
-                >
-                  <Mic className="w-4 h-4" />
-                </span>
-                <span className="text-[14.5px] font-bold tracking-wide truncate">
-                  {idleVoiceLabel}
-                </span>
+                <span className="w-2 h-2 rounded-full ak-live-dot shrink-0" />
+                <span>按住说话</span>
               </>
             )}
           </button>
@@ -387,7 +333,7 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
                 triggerHaptic('tap')
                 setTextMode((m) => (m === 'paste' ? 'type' : 'paste'))
               }}
-              className="tile-surface ak-elevated ak-text-2 h-[54px] px-3 rounded-[18px] border text-xs font-medium shrink-0"
+              className="tile-surface ak-elevated ak-text-2 h-[52px] px-3 rounded-[18px] border text-xs font-medium shrink-0"
               aria-label="切换文本注入方式"
             >
               {textMode === 'paste' ? '粘贴' : '键入'}
@@ -404,8 +350,8 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
                   handleSendText(true)
                 }
               }}
-              placeholder="输入文字或手机语音直达电脑…"
-              className="ak-input flex-1 min-w-0 h-[54px] px-3.5 rounded-[18px] border text-sm focus:outline-none focus:border-blue-500"
+              placeholder="输入文字…"
+              className="ak-input flex-1 min-w-0 h-[52px] px-3.5 rounded-[18px] border text-sm focus:outline-none"
             />
 
             <button
@@ -413,12 +359,7 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
               disabled={sendDisabled}
               onClick={() => handleSendText(false)}
               aria-label="仅发送文本"
-              className={clsx(
-                'h-[54px] w-12 rounded-[18px] inline-flex items-center justify-center border transition-colors shrink-0',
-                sendDisabled
-                  ? 'ak-pill ak-text-3 opacity-50'
-                  : 'tile-surface ak-elevated ak-text-1',
-              )}
+              className="tile-surface ak-elevated ak-text-1 h-[52px] w-11 rounded-[18px] inline-flex items-center justify-center border disabled:opacity-40 shrink-0"
             >
               <Send className="w-4 h-4" />
             </button>
@@ -428,12 +369,7 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
               disabled={sendDisabled}
               onClick={() => handleSendText(true)}
               aria-label="发送并回车"
-              className={clsx(
-                'h-[54px] px-3.5 rounded-[18px] inline-flex items-center justify-center gap-1 text-xs font-semibold transition-all shrink-0',
-                sendDisabled
-                  ? 'bg-blue-500/15 text-blue-400/50 border border-blue-400/15'
-                  : 'bg-blue-600 text-white border border-blue-500 shadow-sm shadow-blue-500/25 active:scale-95',
-              )}
+              className="ak-primary-solid h-[52px] w-11 rounded-[18px] border inline-flex items-center justify-center disabled:opacity-40 active:scale-95 transition-transform shrink-0"
             >
               <CornerDownLeft className="w-4 h-4" />
             </button>

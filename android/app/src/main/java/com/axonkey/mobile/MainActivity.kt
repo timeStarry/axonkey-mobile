@@ -24,6 +24,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
@@ -65,6 +66,12 @@ class MainActivity : AppCompatActivity() {
     private var volumeCaptureMode: String = "off"
     private var heldVolUp: Boolean = false
     private var heldVolDown: Boolean = false
+
+    private val webBackCallback = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            emitJs("window.__axonkeyNativeOnBack && window.__axonkeyNativeOnBack();")
+        }
+    }
 
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = Unit
@@ -205,6 +212,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         setContentView(webView)
+        onBackPressedDispatcher.addCallback(this, webBackCallback)
         applyWindowSystemBarTheme(resolveSystemNightMode(resources.configuration))
         webView.loadUrl("https://appassets.androidplatform.net/assets/web/index.html")
     }
@@ -314,19 +322,17 @@ class MainActivity : AppCompatActivity() {
 
     @Suppress("DEPRECATION")
     private fun applyWindowSystemBarTheme(isDark: Boolean) {
-        val statusBg = if (isDark) Color.parseColor("#0d1017") else Color.parseColor("#f4f6fb")
-        val navBg = if (isDark) Color.parseColor("#0c0f16") else Color.parseColor("#e7ecf4")
-        val canvasBg = if (isDark) Color.parseColor("#0a0c10") else Color.parseColor("#eef2f7")
+        val seamlessBg = if (isDark) Color.parseColor("#141518") else Color.parseColor("#f2f2f6")
 
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
-        window.statusBarColor = statusBg
-        window.navigationBarColor = navBg
+        window.statusBarColor = seamlessBg
+        window.navigationBarColor = seamlessBg
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = !isDark
             isAppearanceLightNavigationBars = !isDark
         }
         if (::webView.isInitialized) {
-            webView.setBackgroundColor(canvasBg)
+            webView.setBackgroundColor(seamlessBg)
         }
     }
 
@@ -561,6 +567,15 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (!isDestroyed) {
                     applyWindowSystemBarTheme(isDark)
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun setBackInterceptEnabled(enabled: Boolean) {
+            runOnUiThread {
+                if (!isDestroyed) {
+                    webBackCallback.isEnabled = enabled
                 }
             }
         }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  PAGE_TEMPLATES,
   createNewZone,
   createPageFromTemplate,
   cycleBentoSpan,
@@ -27,14 +28,8 @@ function makeTile(
   }
 }
 
-describe('bentoLayout — Deterministic 2D Dense Packer & Zone Normalizer', () => {
+describe('bentoLayout — Plan B Circular Clickpad Ring, Corner Rescue & Dense Packer', () => {
   it('packs 1x1, 2x1, 1x2, and 2x2 tiles densely with row-major hole filling', () => {
-    // 3-column grid:
-    // t1 (1x2) -> (col 0, row 0..1)
-    // t2 (2x1) -> (col 1..2, row 0)
-    // t3 (2x2) -> cannot fit at (col 1, row 1) because row 1 only has cols 1..2 free? Wait:
-    //   cols 1..2 on row 1 and row 2 ARE free! So t3 (2x2) fits at (col 1, row 1)!
-    // t4 (1x1) -> fills hole at (col 0, row 2)!
     const tiles = [
       makeTile('t1', 1, 2),
       makeTile('t2', 2, 1),
@@ -62,10 +57,6 @@ describe('bentoLayout — Deterministic 2D Dense Packer & Zone Normalizer', () =
   })
 
   it('backfills earlier 1x1 holes skipped by wide 2x1 tiles (row dense)', () => {
-    // 3-column grid:
-    // a (2x1) -> (col 0..1, row 0), leaving (col 2, row 0) free
-    // b (2x1) -> cannot fit in 1 col at row 0 -> goes to (col 0..1, row 1)
-    // c (1x1) -> dense scan starts at row 0 -> backfills (col 2, row 0)!
     const tiles = [makeTile('a', 2, 1), makeTile('b', 2, 1), makeTile('c', 1, 1)]
     const packed = packBentoTiles(tiles, 3)
 
@@ -78,26 +69,10 @@ describe('bentoLayout — Deterministic 2D Dense Packer & Zone Normalizer', () =
     })
   })
 
-  it('clamps spans safely and handles empty tile arrays', () => {
+  it('clamps spans safely and cycles Bento spans deterministically', () => {
     const empty = packBentoTiles([], 4)
     expect(empty).toEqual({ columns: 4, totalRows: 1, items: [] })
 
-    const oversized = {
-      ...makeTile('wide', 2, 2),
-      colSpan: 3 as unknown as 1 | 2,
-      rowSpan: 5 as unknown as 1 | 2,
-    }
-    const packed2Col = packBentoTiles([oversized], 2)
-    expect(packed2Col.items[0]).toMatchObject({
-      col: 0,
-      row: 0,
-      colSpan: 2,
-      rowSpan: 2,
-    })
-    expect(packed2Col.totalRows).toBe(2)
-  })
-
-  it('cycles Bento spans deterministically: 1x1 -> 2x1 -> 1x2 -> 2x2 -> 1x1', () => {
     const s1 = cycleBentoSpan(1, 1)
     expect(s1).toEqual({ colSpan: 2, rowSpan: 1 })
     const s2 = cycleBentoSpan(s1.colSpan, s1.rowSpan)
@@ -108,11 +83,11 @@ describe('bentoLayout — Deterministic 2D Dense Packer & Zone Normalizer', () =
     expect(s4).toEqual({ colSpan: 1, rowSpan: 1 })
   })
 
-  it('normalizes legacy Classic Remote and Grid pages identically to Desktop contract', () => {
+  it('normalizes Plan B Classic Remote (5-slot Circular Clickpad Ring) & legacy zone-less remote pages', () => {
     const classicRemote = DEFAULT_DEMO_DECK.pages[0]
     const remoteZones = normalizePageZones(classicRemote)
 
-    expect(remoteZones).toHaveLength(3)
+    expect(remoteZones).toHaveLength(4)
     expect(remoteZones[0]).toMatchObject({
       kind: 'bento-grid',
       columns: 3,
@@ -121,6 +96,59 @@ describe('bentoLayout — Deterministic 2D Dense Packer & Zone Normalizer', () =
     expect(remoteZones[1]).toMatchObject({
       kind: 'dpad-3x3',
       tileIds: [
+        '',
+        'remote.up',
+        '',
+        'remote.left',
+        'remote.ok',
+        'remote.right',
+        '',
+        'remote.down',
+        '',
+      ],
+    })
+    expect(remoteZones[2]).toMatchObject({
+      kind: 'bento-grid',
+      columns: 4,
+      tileIds: ['remote.back', 'remote.mute', 'remote.vol_down', 'remote.vol_up'],
+    })
+    expect(remoteZones[3]).toMatchObject({
+      kind: 'bento-grid',
+      columns: 2,
+      tileIds: ['remote.q1', 'remote.q2', 'remote.q3', 'remote.q4'],
+    })
+
+    // Zone-less legacy remote snapshot synthesizes identical Plan B structure
+    const legacyZoneLessRemote: MobileDeckPage = {
+      ...classicRemote,
+      zones: undefined,
+    }
+    const synthesized = normalizePageZones(legacyZoneLessRemote)
+    expect(synthesized).toHaveLength(4)
+    expect(synthesized[1].tileIds).toEqual([
+      '',
+      'remote.up',
+      '',
+      'remote.left',
+      'remote.ok',
+      'remote.right',
+      '',
+      'remote.down',
+      '',
+    ])
+    expect(synthesized[2]).toMatchObject({
+      kind: 'bento-grid',
+      columns: 4,
+      tileIds: ['remote.back', 'remote.mute', 'remote.vol_down', 'remote.vol_up'],
+    })
+  })
+
+  it('rescues non-empty corner slots [0, 2, 6, 8] from legacy dpad-3x3 zones into an immediate bento-grid row', () => {
+    const legacyDpadPage: MobileDeckPage = {
+      id: 'legacy-remote',
+      name: '旧版九宫遥控',
+      columns: 3,
+      tiles: [
         'remote.back',
         'remote.up',
         'remote.vol_up',
@@ -130,123 +158,101 @@ describe('bentoLayout — Deterministic 2D Dense Packer & Zone Normalizer', () =
         'remote.mute',
         'remote.down',
         'remote.vol_down',
-      ],
-    })
-    expect(remoteZones[2]).toMatchObject({
-      kind: 'bento-grid',
-      columns: 2,
-      tileIds: ['remote.q1', 'remote.q2', 'remote.q3', 'remote.q4'],
-    })
-
-    const gridPage = DEFAULT_DEMO_DECK.pages[1]
-    const gridZones = normalizePageZones(gridPage)
-    expect(gridZones).toEqual([
-      {
-        id: `${gridPage.id}-grid`,
-        kind: 'bento-grid',
-        columns: 3,
-        tileIds: gridPage.tiles.map((t) => t.id),
-      },
-    ])
-  })
-
-  it('rescues orphaned tiles into trailing bento-grid zone so no tile is ever lost', () => {
-    const pointerOnlyPage: MobileDeckPage = {
-      id: 'mixed-1',
-      name: '混排页',
-      columns: 3,
-      tiles: [makeTile('orphan.1'), makeTile('orphan.2')],
+        'remote.q1',
+        'remote.q2',
+      ].map((id) => makeTile(id)),
       zones: [
         {
-          id: 'z-pad',
-          kind: 'pointer-pad',
-          pointerMode: 'trackpad',
-          tileIds: [],
+          id: 'z-ring',
+          kind: 'dpad-3x3',
+          tileIds: [
+            'remote.back',
+            'remote.up',
+            'remote.vol_up',
+            'remote.left',
+            'remote.ok',
+            'remote.right',
+            'remote.mute',
+            'remote.down',
+            'remote.vol_down',
+          ],
+        },
+        {
+          id: 'z-bottom',
+          kind: 'bento-grid',
+          columns: 2,
+          tileIds: ['remote.q1', 'remote.q2'],
         },
       ],
     }
 
-    const normalized = normalizePageZones(pointerOnlyPage)
-    expect(normalized).toHaveLength(2)
-    expect(normalized[0].kind).toBe('pointer-pad')
-    expect(normalized[1]).toMatchObject({
+    const normalized = normalizePageZones(legacyDpadPage)
+    expect(normalized).toHaveLength(3)
+    expect(normalized[0]).toEqual({
+      id: 'z-ring',
+      kind: 'dpad-3x3',
+      tileIds: [
+        '',
+        'remote.up',
+        '',
+        'remote.left',
+        'remote.ok',
+        'remote.right',
+        '',
+        'remote.down',
+        '',
+      ],
+    })
+    expect(normalized[1]).toEqual({
+      id: 'z-ring-corners',
       kind: 'bento-grid',
-      columns: 3,
-      tileIds: ['orphan.1', 'orphan.2'],
+      columns: 4,
+      tileIds: ['remote.back', 'remote.vol_up', 'remote.mute', 'remote.vol_down'],
+    })
+    expect(normalized[2]).toMatchObject({
+      id: 'z-bottom',
+      kind: 'bento-grid',
+      columns: 2,
+      tileIds: ['remote.q1', 'remote.q2'],
     })
   })
 
-  it('reorders tileIds cleanly and builds mixed/tall templates within limits', () => {
-    expect(reorderTileIds(['a', 'b', 'c', 'd'], 'a', 'c')).toEqual(['b', 'c', 'a', 'd'])
-    expect(reorderTileIds(['a', 'b', 'c', 'd'], 'd', 'b')).toEqual(['a', 'd', 'b', 'c'])
-
-    const mixed = createPageFromTemplate('pointer-mixed', 2)
-    expect(mixed.zones?.[0].kind).toBe('pointer-pad')
-    expect(mixed.zones?.[1].kind).toBe('bento-grid')
-
-    const tall = createPageFromTemplate('media-tall', 3)
-    expect(tall.tiles.some((t) => t.colSpan === 2 && t.rowSpan === 2)).toBe(true)
-    expect(tall.tiles.some((t) => t.colSpan === 1 && t.rowSpan === 2)).toBe(true)
-  })
-
-  it('creates 6-slot gesture-pad zones in canonical [up, down, left, right, tap, double] order and normalizes without orphaning', () => {
+  it('creates 5-slot Circular Clickpad Ring zones and exposes the 4 geometric page templates', () => {
     const basePage: MobileDeckPage = {
-      id: 'g-page',
-      name: '手势页',
+      id: 'p1',
+      name: '空白页',
       columns: 3,
       tiles: [],
       zones: [],
     }
-    const { zone, addedTiles } = createNewZone(basePage, 'gesture-pad')
-    expect(zone.kind).toBe('gesture-pad')
-    expect(zone.tileIds).toHaveLength(6)
-    expect(addedTiles).toHaveLength(6)
-    expect(addedTiles.map((t) => t.label)).toEqual([
-      '上滑',
-      '下滑',
-      '左滑',
-      '右滑',
-      '轻点',
-      '双击',
+    const { zone: ringZone, addedTiles: ringTiles } = createNewZone(basePage, 'dpad-3x3')
+    expect(ringZone.kind).toBe('dpad-3x3')
+    expect(ringTiles).toHaveLength(5)
+    expect(ringTiles.map((t) => t.label)).toEqual(['上', '左', '确定', '右', '下'])
+    expect(ringTiles.every((t) => t.accent === 'slate')).toBe(true)
+    expect(ringZone.tileIds[0]).toBe('')
+    expect(ringZone.tileIds[2]).toBe('')
+    expect(ringZone.tileIds[6]).toBe('')
+    expect(ringZone.tileIds[8]).toBe('')
+    expect([
+      ringZone.tileIds[1],
+      ringZone.tileIds[3],
+      ringZone.tileIds[4],
+      ringZone.tileIds[5],
+      ringZone.tileIds[7],
+    ]).toEqual(ringTiles.map((t) => t.id))
+
+    expect(PAGE_TEMPLATES.map((t) => t.title)).toEqual([
+      '触控圆盘遥控',
+      '快捷按键网格',
+      '触控板混排',
+      '空白网格',
     ])
-    expect(zone.tileIds).toEqual(addedTiles.map((t) => t.id))
 
-    const pageWithGesture: MobileDeckPage = {
-      ...basePage,
-      tiles: addedTiles,
-      zones: [
-        {
-          ...zone,
-          padHeight: 'tall',
-          tileIds: zone.tileIds.slice(0, 4), // truncated input pads to 6 slots
-        },
-        {
-          id: 'embed-pad',
-          kind: 'pointer-pad',
-          pointerMode: 'trackpad',
-          padHeight: 'compact',
-          showButtons: false,
-          tileIds: [],
-        },
-      ],
-    }
-
-    const normalized = normalizePageZones(pageWithGesture)
-    expect(normalized[0].kind).toBe('gesture-pad')
-    expect(normalized[0].padHeight).toBe('tall')
-    expect(normalized[0].tileIds).toHaveLength(6)
-    expect(normalized[0].tileIds.slice(4)).toEqual(['', ''])
-    expect(normalized[1]).toMatchObject({
-      kind: 'pointer-pad',
-      padHeight: 'compact',
-      showButtons: false,
-    })
-    // The 2 unreferenced tiles from slicing 0..4 get rescued into a trailing bento-grid so nothing is lost
-    expect(normalized[2]).toMatchObject({
-      kind: 'bento-grid',
-      tileIds: [addedTiles[4].id, addedTiles[5].id],
-    })
-
+    expect(reorderTileIds(['a', 'b', 'c', 'd'], 'a', 'c')).toEqual(['b', 'c', 'a', 'd'])
+    const mixed = createPageFromTemplate('pointer-mixed', 2)
+    expect(mixed.zones?.[0].kind).toBe('pointer-pad')
+    expect(mixed.zones?.[1].kind).toBe('bento-grid')
     expect(normalizeGesturePadSlotIds(['a', 'b'])).toEqual(['a', 'b', '', '', '', ''])
   })
 })

@@ -10,25 +10,41 @@ export const MAX_TILES_PER_PAGE = 32
 export const MAX_ZONES_PER_PAGE = 6
 
 export const CLASSIC_REMOTE_TOP_IDS = ['remote.esc', 'remote.menu', 'remote.home'] as const
-export const CLASSIC_REMOTE_DPAD_IDS = [
-  'remote.back',
+export const CLASSIC_REMOTE_RING_IDS = [
+  '',
   'remote.up',
-  'remote.vol_up',
+  '',
   'remote.left',
   'remote.ok',
   'remote.right',
-  'remote.mute',
+  '',
   'remote.down',
+  '',
+] as const
+export const CLASSIC_REMOTE_UTILITY_IDS = [
+  'remote.back',
+  'remote.mute',
   'remote.vol_down',
+  'remote.vol_up',
 ] as const
 
+export const CLICKPAD_RING_SLOT_SPECS = [
+  { index: 1, key: 'up', label: '上', icon: 'arrow-up' },
+  { index: 3, key: 'left', label: '左', icon: 'arrow-left' },
+  { index: 4, key: 'ok', label: '确定', icon: 'enter' },
+  { index: 5, key: 'right', label: '右', icon: 'arrow-right' },
+  { index: 7, key: 'down', label: '下', icon: 'arrow-down' },
+] as const
+
+export const DPAD_CORNER_INDICES = [0, 2, 6, 8] as const
+
 export const GESTURE_PAD_SLOT_SPECS = [
-  { index: 0, key: 'up', badge: '↑', dirLabel: '↑ 上滑', label: '上滑', icon: 'arrow-up', accent: 'blue' },
+  { index: 0, key: 'up', badge: '↑', dirLabel: '↑ 上滑', label: '上滑', icon: 'arrow-up', accent: 'slate' },
   { index: 1, key: 'down', badge: '↓', dirLabel: '↓ 下滑', label: '下滑', icon: 'arrow-down', accent: 'slate' },
   { index: 2, key: 'left', badge: '←', dirLabel: '← 左滑', label: '左滑', icon: 'arrow-left', accent: 'slate' },
   { index: 3, key: 'right', badge: '→', dirLabel: '→ 右滑', label: '右滑', icon: 'arrow-right', accent: 'slate' },
-  { index: 4, key: 'tap', badge: '单击', dirLabel: '单击', label: '轻点', icon: 'zap', accent: 'emerald' },
-  { index: 5, key: 'double', badge: '双击', dirLabel: '双击', label: '双击', icon: 'sparkles', accent: 'violet' },
+  { index: 4, key: 'tap', badge: '单击', dirLabel: '单击', label: '轻点', icon: 'zap', accent: 'slate' },
+  { index: 5, key: 'double', badge: '双击', dirLabel: '双击', label: '双击', icon: 'sparkles', accent: 'slate' },
 ] as const satisfies readonly {
   index: number
   key: 'up' | 'down' | 'left' | 'right' | 'tap' | 'double'
@@ -61,10 +77,10 @@ export const BENTO_SPAN_OPTIONS: readonly {
   label: BentoSpanLabel
   desc: string
 }[] = [
-  { colSpan: 1, rowSpan: 1, label: '1×1', desc: '标准方键' },
-  { colSpan: 2, rowSpan: 1, label: '2×1', desc: '横向宽键' },
-  { colSpan: 1, rowSpan: 2, label: '1×2', desc: '纵向高键' },
-  { colSpan: 2, rowSpan: 2, label: '2×2', desc: '巨幅方垫' },
+  { colSpan: 1, rowSpan: 1, label: '1×1', desc: '方键' },
+  { colSpan: 2, rowSpan: 1, label: '2×1', desc: '宽键' },
+  { colSpan: 1, rowSpan: 2, label: '1×2', desc: '长键' },
+  { colSpan: 2, rowSpan: 2, label: '2×2', desc: '大键' },
 ] as const
 
 export function clampSpan(value: number | undefined): 1 | 2 {
@@ -96,39 +112,89 @@ export function cycleBentoSpan(
 }
 
 /**
- * Deterministic legacy zone normalization (Contract Section 1.3).
- * GuaranteesPhone UI and Desktop Dynamic SVG synthesize identical zones and never orphan tiles.
+ * Deterministic Plan B zone normalization + automatic legacy `dpad-3x3` corner-tile rescue.
+ * Guarantees Mobile UI and Desktop Dynamic SVG synthesize identical zones and never orphan tiles.
  */
 export function normalizePageZones(page: MobileDeckPage): MobileDeckZone[] {
   const pageCols = clampColumns(page.columns, 3)
 
   if (page.zones && page.zones.length > 0) {
-    const zones: MobileDeckZone[] = page.zones.map((z, idx) => ({
-      ...z,
-      id: z.id?.trim() || `${page.id}-zone-${idx + 1}`,
-      ...(z.kind === 'bento-grid'
-        ? { columns: clampColumns(z.columns, pageCols) }
-        : {}),
-      ...(z.kind === 'pointer-pad'
-        ? {
-            pointerMode: z.pointerMode === 'relative' ? 'relative' : 'trackpad',
-            ...(z.padHeight === 'compact' || z.padHeight === 'standard' || z.padHeight === 'tall'
-              ? { padHeight: z.padHeight }
-              : {}),
-            ...(typeof z.showButtons === 'boolean' ? { showButtons: z.showButtons } : {}),
-          }
-        : {}),
-      ...(z.kind === 'gesture-pad'
-        ? {
-            ...(z.padHeight === 'compact' || z.padHeight === 'standard' || z.padHeight === 'tall'
-              ? { padHeight: z.padHeight }
-              : {}),
-            tileIds: normalizeGesturePadSlotIds(Array.isArray(z.tileIds) ? z.tileIds : []),
-          }
-        : {
-            tileIds: Array.isArray(z.tileIds) ? [...z.tileIds] : [],
-          }),
-    }))
+    const zones: MobileDeckZone[] = []
+
+    page.zones.forEach((z, idx) => {
+      const zoneId = z.id?.trim() || `${page.id}-zone-${idx + 1}`
+
+      if (z.kind === 'dpad-3x3') {
+        const rawSlots = normalizeDpadSlotIds(Array.isArray(z.tileIds) ? z.tileIds : [])
+        const cornerIds = DPAD_CORNER_INDICES.map((i) => rawSlots[i]).filter(Boolean)
+        const canonicalRingSlots = [
+          '',
+          rawSlots[1],
+          '',
+          rawSlots[3],
+          rawSlots[4],
+          rawSlots[5],
+          '',
+          rawSlots[7],
+          '',
+        ]
+
+        zones.push({
+          ...z,
+          id: zoneId,
+          kind: 'dpad-3x3',
+          tileIds: canonicalRingSlots,
+        })
+
+        if (cornerIds.length > 0) {
+          const rescuedCols: 2 | 3 | 4 =
+            cornerIds.length === 2 ? 2 : cornerIds.length === 3 ? 3 : 4
+          zones.push({
+            id: `${zoneId}-corners`,
+            kind: 'bento-grid',
+            columns: rescuedCols,
+            tileIds: cornerIds,
+          })
+        }
+        return
+      }
+
+      if (z.kind === 'pointer-pad') {
+        zones.push({
+          ...z,
+          id: zoneId,
+          kind: 'pointer-pad',
+          pointerMode: z.pointerMode === 'relative' ? 'relative' : 'trackpad',
+          ...(z.padHeight === 'compact' || z.padHeight === 'standard' || z.padHeight === 'tall'
+            ? { padHeight: z.padHeight }
+            : {}),
+          ...(typeof z.showButtons === 'boolean' ? { showButtons: z.showButtons } : {}),
+          tileIds: [],
+        })
+        return
+      }
+
+      if (z.kind === 'gesture-pad') {
+        zones.push({
+          ...z,
+          id: zoneId,
+          kind: 'gesture-pad',
+          ...(z.padHeight === 'compact' || z.padHeight === 'standard' || z.padHeight === 'tall'
+            ? { padHeight: z.padHeight }
+            : {}),
+          tileIds: normalizeGesturePadSlotIds(Array.isArray(z.tileIds) ? z.tileIds : []),
+        })
+        return
+      }
+
+      zones.push({
+        ...z,
+        id: zoneId,
+        kind: 'bento-grid',
+        columns: clampColumns(z.columns, pageCols),
+        tileIds: Array.isArray(z.tileIds) ? [...z.tileIds] : [],
+      })
+    })
 
     const referenced = new Set<string>()
     for (const z of zones) {
@@ -167,8 +233,13 @@ export function normalizePageZones(page: MobileDeckPage): MobileDeckZone[] {
   if (page.layout === 'remote' || page.id === 'classic-remote') {
     const existingIds = new Set(page.tiles.map((t) => t.id))
     const topIds = CLASSIC_REMOTE_TOP_IDS.filter((id) => existingIds.has(id))
-    const dpadIds = CLASSIC_REMOTE_DPAD_IDS.map((id) => (existingIds.has(id) ? id : ''))
-    const used = new Set<string>([...topIds, ...dpadIds.filter(Boolean)])
+    const ringIds = CLASSIC_REMOTE_RING_IDS.map((id) => (id && existingIds.has(id) ? id : ''))
+    const utilityIds = CLASSIC_REMOTE_UTILITY_IDS.filter((id) => existingIds.has(id))
+    const used = new Set<string>([
+      ...topIds,
+      ...ringIds.filter(Boolean),
+      ...utilityIds,
+    ])
     const remainingIds = page.tiles.filter((t) => !used.has(t.id)).map((t) => t.id)
 
     const synthesized: MobileDeckZone[] = []
@@ -183,8 +254,16 @@ export function normalizePageZones(page: MobileDeckPage): MobileDeckZone[] {
     synthesized.push({
       id: `${page.id}-dpad`,
       kind: 'dpad-3x3',
-      tileIds: dpadIds,
+      tileIds: ringIds,
     })
+    if (utilityIds.length > 0) {
+      synthesized.push({
+        id: `${page.id}-utility`,
+        kind: 'bento-grid',
+        columns: utilityIds.length === 2 ? 2 : utilityIds.length === 3 ? 3 : 4,
+        tileIds: utilityIds,
+      })
+    }
     if (remainingIds.length > 0) {
       synthesized.push({
         id: `${page.id}-quick`,
@@ -207,7 +286,7 @@ export function normalizePageZones(page: MobileDeckPage): MobileDeckZone[] {
 }
 
 /**
- * Deterministic 2D dense row-major first-fit Bento grid packer (Contract Section 1.4).
+ * Deterministic 2D dense row-major first-fit Bento grid packer.
  * Matches CSS `grid-auto-flow: row dense` while outputting explicit 0-based (col, row).
  */
 export function packBentoTiles(tiles: MobileTile[], columns: 2 | 3 | 4): PackedBentoResult {
@@ -315,14 +394,13 @@ export function createNewCustomTile(
   indexHint = 1,
   overrides?: Partial<MobileTile>,
 ): MobileTile {
-  const accents: TileAccent[] = ['blue', 'emerald', 'violet', 'amber', 'slate', 'rose']
   const icons = ['zap', 'sparkles', 'play', 'check', 'command', 'terminal']
   const pick = Math.max(0, indexHint - 1)
   return {
     id: makeCustomId('tile'),
-    label: `自定义 ${indexHint}`,
+    label: `按键 ${indexHint}`,
     icon: icons[pick % icons.length],
-    accent: accents[pick % accents.length],
+    accent: 'slate',
     colSpan: 1,
     rowSpan: 1,
     mode: 'gesture',
@@ -359,7 +437,7 @@ export function createNewZone(
       const t = createNewCustomTile(page.tiles.length + addedTiles.length + 1, {
         label: spec.label,
         icon: spec.icon,
-        accent: spec.accent,
+        accent: 'slate',
       })
       addedTiles.push(t)
       return t.id
@@ -376,34 +454,24 @@ export function createNewZone(
   }
 
   if (kind === 'dpad-3x3') {
-    const specs: Array<{ label: string; icon: string; accent: TileAccent } | null> = [
-      { label: '返回', icon: 'undo', accent: 'slate' },
-      { label: '上', icon: 'arrow-up', accent: 'slate' },
-      { label: '音量+', icon: 'volume-up', accent: 'slate' },
-      { label: '左', icon: 'arrow-left', accent: 'slate' },
-      { label: '确认', icon: 'enter', accent: 'blue' },
-      { label: '右', icon: 'arrow-right', accent: 'slate' },
-      { label: '静音', icon: 'volume-mute', accent: 'slate' },
-      { label: '下', icon: 'arrow-down', accent: 'slate' },
-      { label: '音量-', icon: 'volume-down', accent: 'slate' },
-    ]
     const remainingBudget = Math.max(0, MAX_TILES_PER_PAGE - page.tiles.length)
     const addedTiles: MobileTile[] = []
-    const tileIds = specs.map((spec) => {
-      if (!spec || addedTiles.length >= remainingBudget) return ''
+    const slots = new Array<string>(9).fill('')
+    for (const spec of CLICKPAD_RING_SLOT_SPECS) {
+      if (addedTiles.length >= remainingBudget) break
       const t = createNewCustomTile(page.tiles.length + addedTiles.length + 1, {
         label: spec.label,
         icon: spec.icon,
-        accent: spec.accent,
+        accent: 'slate',
       })
       addedTiles.push(t)
-      return t.id
-    })
+      slots[spec.index] = t.id
+    }
     return {
       zone: {
         id: zoneId,
         kind: 'dpad-3x3',
-        tileIds,
+        tileIds: slots,
       },
       addedTiles,
     }
@@ -428,35 +496,30 @@ export function createNewZone(
 }
 
 export type PageTemplateId =
-  | 'bento-blank'
-  | 'pointer-mixed'
-  | 'media-tall'
   | 'classic-remote'
+  | 'media-tall'
+  | 'pointer-mixed'
+  | 'bento-blank'
 
 export const PAGE_TEMPLATES: readonly {
   id: PageTemplateId
   title: string
-  subtitle: string
 }[] = [
   {
-    id: 'bento-blank',
-    title: '空白 Bento 网格',
-    subtitle: '3 列自由网格，支持 1×1 / 2×1 / 1×2 / 2×2 混排',
-  },
-  {
-    id: 'pointer-mixed',
-    title: '触控+快捷混排',
-    subtitle: '上半屏内嵌触控板/空鼠 + 下半屏自定义快捷键',
+    id: 'classic-remote',
+    title: '触控圆盘遥控',
   },
   {
     id: 'media-tall',
-    title: '1×2 媒体/翻页大键',
-    subtitle: '含 2×2 核心大垫与 1×2 纵向盲操长键',
+    title: '快捷按键网格',
   },
   {
-    id: 'classic-remote',
-    title: '经典九宫遥控',
-    subtitle: '顶部功能键 + 3×3 方向盘 + 底部双列大键',
+    id: 'pointer-mixed',
+    title: '触控板混排',
+  },
+  {
+    id: 'bento-blank',
+    title: '空白网格',
   },
 ] as const
 
@@ -472,14 +535,14 @@ export function createPageFromTemplate(
       createNewCustomTile(1, {
         label: '主动作',
         icon: 'sparkles',
-        accent: 'blue',
+        accent: 'emerald',
         colSpan: 2,
         rowSpan: 1,
       }),
-      createNewCustomTile(2, { label: '确认', icon: 'enter', accent: 'emerald' }),
+      createNewCustomTile(2, { label: '确认', icon: 'enter', accent: 'slate' }),
       createNewCustomTile(3, { label: '复制', icon: 'copy', accent: 'slate' }),
       createNewCustomTile(4, { label: '粘贴', icon: 'clipboard', accent: 'slate' }),
-      createNewCustomTile(5, { label: '撤销', icon: 'undo', accent: 'amber' }),
+      createNewCustomTile(5, { label: '撤销', icon: 'undo', accent: 'slate' }),
     ]
     return {
       id: pageId,
@@ -508,17 +571,15 @@ export function createPageFromTemplate(
     const tiles: MobileTile[] = [
       createNewCustomTile(1, {
         label: '播放 / 暂停',
-        subtitle: '核心主控',
         icon: 'play',
-        accent: 'violet',
+        accent: 'emerald',
         colSpan: 2,
         rowSpan: 2,
       }),
       createNewCustomTile(2, {
         label: '音量 +',
-        subtitle: '纵向长键',
         icon: 'volume-up',
-        accent: 'blue',
+        accent: 'slate',
         colSpan: 1,
         rowSpan: 2,
       }),
@@ -538,23 +599,22 @@ export function createPageFromTemplate(
       }),
       createNewCustomTile(5, {
         label: '音量 -',
-        subtitle: '纵向长键',
         icon: 'volume-down',
-        accent: 'amber',
+        accent: 'slate',
         colSpan: 1,
         rowSpan: 2,
       }),
       createNewCustomTile(6, {
-        label: '全屏 / 确认',
+        label: '全屏',
         icon: 'enter',
-        accent: 'emerald',
+        accent: 'slate',
         colSpan: 2,
         rowSpan: 1,
       }),
     ]
     return {
       id: pageId,
-      name: customName?.trim() || `媒体大键 ${pageIndex}`,
+      name: customName?.trim() || `快捷面板 ${pageIndex}`,
       layout: 'grid',
       columns: 3,
       tiles,
@@ -570,33 +630,39 @@ export function createPageFromTemplate(
   }
 
   if (template === 'classic-remote') {
-    const topSpecs: Array<{ label: string; icon: string; accent: TileAccent }> = [
-      { label: '退出', icon: 'esc', accent: 'rose' },
-      { label: '菜单', icon: 'menu', accent: 'blue' },
-      { label: '主页', icon: 'home', accent: 'slate' },
+    const topSpecs = [
+      { label: 'Esc', icon: 'power' },
+      { label: '菜单', icon: 'menu' },
+      { label: '主页', icon: 'home' },
     ]
-    const dpadSpecs: Array<{ label: string; icon: string; accent: TileAccent }> = [
-      { label: '返回', icon: 'undo', accent: 'slate' },
-      { label: '上', icon: 'arrow-up', accent: 'slate' },
-      { label: '音量+', icon: 'volume-up', accent: 'slate' },
-      { label: '左', icon: 'arrow-left', accent: 'slate' },
-      { label: '确认', icon: 'enter', accent: 'blue' },
-      { label: '右', icon: 'arrow-right', accent: 'slate' },
-      { label: '静音', icon: 'volume-mute', accent: 'slate' },
-      { label: '下', icon: 'arrow-down', accent: 'slate' },
-      { label: '音量-', icon: 'volume-down', accent: 'slate' },
+    const topTiles = topSpecs.map((s, i) => createNewCustomTile(i + 1, { ...s, accent: 'slate' }))
+
+    const ringTiles: MobileTile[] = []
+    const ringSlots = new Array<string>(9).fill('')
+    CLICKPAD_RING_SLOT_SPECS.forEach((spec, idx) => {
+      const t = createNewCustomTile(4 + idx, {
+        label: spec.label,
+        icon: spec.icon,
+        accent: 'slate',
+      })
+      ringTiles.push(t)
+      ringSlots[spec.index] = t.id
+    })
+
+    const utilitySpecs = [
+      { label: '返回', icon: 'undo' },
+      { label: '静音', icon: 'volume-mute' },
+      { label: '音量-', icon: 'volume-down' },
+      { label: '音量+', icon: 'volume-up' },
     ]
-    const quickSpecs: Array<{ label: string; icon: string; accent: TileAccent }> = [
-      { label: '快捷 1', icon: 'sparkles', accent: 'blue' },
-      { label: '快捷 2', icon: 'check', accent: 'emerald' },
-    ]
-    const topTiles = topSpecs.map((s, i) => createNewCustomTile(i + 1, s))
-    const dpadTiles = dpadSpecs.map((s, i) => createNewCustomTile(i + 4, s))
-    const quickTiles = quickSpecs.map((s, i) => createNewCustomTile(i + 13, s))
-    const tiles = [...topTiles, ...dpadTiles, ...quickTiles]
+    const utilityTiles = utilitySpecs.map((s, i) =>
+      createNewCustomTile(9 + i, { ...s, accent: 'slate' }),
+    )
+
+    const tiles = [...topTiles, ...ringTiles, ...utilityTiles]
     return {
       id: pageId,
-      name: customName?.trim() || `九宫遥控 ${pageIndex}`,
+      name: customName?.trim() || `圆盘遥控 ${pageIndex}`,
       layout: 'remote',
       columns: 3,
       tiles,
@@ -610,13 +676,13 @@ export function createPageFromTemplate(
         {
           id: `${pageId}-dpad`,
           kind: 'dpad-3x3',
-          tileIds: dpadTiles.map((t) => t.id),
+          tileIds: ringSlots,
         },
         {
-          id: `${pageId}-quick`,
+          id: `${pageId}-utility`,
           kind: 'bento-grid',
-          columns: 2,
-          tileIds: quickTiles.map((t) => t.id),
+          columns: 4,
+          tileIds: utilityTiles.map((t) => t.id),
         },
       ],
     }
@@ -624,21 +690,13 @@ export function createPageFromTemplate(
 
   // Default: 'bento-blank'
   const tiles: MobileTile[] = [
-    createNewCustomTile(1, {
-      label: '快捷主操作',
-      icon: 'sparkles',
-      accent: 'blue',
-      colSpan: 2,
-      rowSpan: 1,
-    }),
-    createNewCustomTile(2, { label: '确认', icon: 'enter', accent: 'emerald' }),
+    createNewCustomTile(1, { label: '按键 1', icon: 'sparkles', accent: 'slate' }),
+    createNewCustomTile(2, { label: '按键 2', icon: 'check', accent: 'slate' }),
     createNewCustomTile(3, { label: '按键 3', icon: 'command', accent: 'slate' }),
-    createNewCustomTile(4, { label: '按键 4', icon: 'terminal', accent: 'violet' }),
-    createNewCustomTile(5, { label: '按键 5', icon: 'zap', accent: 'amber' }),
   ]
   return {
     id: pageId,
-    name: customName?.trim() || `自定义面板 ${pageIndex}`,
+    name: customName?.trim() || `空白网格 ${pageIndex}`,
     layout: 'grid',
     columns: 3,
     tiles,
