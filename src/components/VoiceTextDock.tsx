@@ -10,6 +10,7 @@ const CANCEL_SLIDE_PX = 42
 
 export function VoiceTextDock() {
   const dockMode = useMobileStore((s) => s.localFeel.preferredDockMode)
+  const effectiveTheme = useMobileStore((s) => s.effectiveTheme)
   const updateLocalFeel = useMobileStore((s) => s.updateLocalFeel)
   const sendText = useMobileStore((s) => s.sendText)
   const getClient = useMobileStore((s) => s.getClient)
@@ -18,6 +19,8 @@ export function VoiceTextDock() {
   const voiceBindingSummary = useMobileStore((s) => s.deck.voiceBindingSummary)
   const voiceLevel = useMobileStore((s) => s.voiceLevel)
   const delivery = useMobileStore((s) => s.textDelivery)
+
+  const isLight = effectiveTheme === 'light'
 
   const [text, setText] = useState('')
   const [textMode, setTextMode] = useState<TextCommitMode>('paste')
@@ -50,7 +53,8 @@ export function VoiceTextDock() {
     let tick = 0
     const timer = setInterval(() => {
       tick += 1
-      const v = 0.28 + 0.45 * Math.abs(Math.sin(tick * 0.42)) + 0.15 * Math.abs(Math.cos(tick * 0.9))
+      const v =
+        0.28 + 0.45 * Math.abs(Math.sin(tick * 0.42)) + 0.15 * Math.abs(Math.cos(tick * 0.9))
       setSimLevel(Math.min(1, v))
     }, 65)
     return () => clearInterval(timer)
@@ -127,12 +131,19 @@ export function VoiceTextDock() {
   }
 
   return (
-    <div className="shrink-0 px-3 pt-1.5 safe-bottom bg-[#0c0f16]">
+    <div className="ak-dock shrink-0 px-3 pt-1.5 safe-bottom">
       {delivery &&
         delivery.status !== 'ok' &&
         delivery.status !== 'sent' &&
         dockMode === 'text' && (
-          <div className="mb-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-400/25 text-[11px] text-amber-200 truncate">
+          <div
+            className={clsx(
+              'mb-1.5 px-2.5 py-1 rounded-lg border text-[11px] truncate',
+              isLight
+                ? 'bg-amber-500/15 border-amber-500/35 text-amber-900'
+                : 'bg-amber-500/15 border-amber-400/25 text-amber-200',
+            )}
+          >
             {delivery.message ?? '文本发送状态未知'}
           </div>
         )}
@@ -146,19 +157,24 @@ export function VoiceTextDock() {
           className={clsx(
             'tile-surface rounded-[20px] inline-flex flex-col items-center justify-center gap-0.5 border shrink-0 touch-none',
             dockMode === 'voice'
-              ? 'h-[60px] w-[58px] bg-[#151a25] border-white/[0.1] text-zinc-300'
-              : 'h-[54px] w-[54px] bg-blue-500/20 border-blue-400/45 text-blue-200',
+              ? 'h-[60px] w-[58px] ak-elevated ak-text-2'
+              : clsx(
+                  'h-[54px] w-[54px]',
+                  isLight
+                    ? 'bg-blue-600/12 border-blue-500/40 text-blue-700'
+                    : 'bg-blue-500/20 border-blue-400/45 text-blue-200',
+                ),
           )}
         >
           {dockMode === 'voice' ? (
             <>
               <Keyboard className="w-[18px] h-[18px]" />
-              <span className="text-[10px] font-medium text-zinc-400">键盘</span>
+              <span className="text-[10px] font-medium ak-text-3">键盘</span>
             </>
           ) : (
             <>
               <Mic className="w-[18px] h-[18px]" />
-              <span className="text-[10px] font-medium text-blue-200">语音</span>
+              <span className="text-[10px] font-semibold">语音</span>
             </>
           )}
         </button>
@@ -177,22 +193,26 @@ export function VoiceTextDock() {
             className={clsx(
               'relative flex-1 h-[60px] px-4 rounded-[20px] border text-sm font-semibold inline-flex items-center justify-center gap-3 select-none touch-none transition-all overflow-hidden',
               !connected
-                ? 'bg-white/[0.03] border-white/[0.06] text-zinc-500'
+                ? 'ak-pill ak-text-3 opacity-80'
                 : canceling
-                  ? 'bg-amber-500/25 border-amber-400/65 text-amber-100 scale-[0.985]'
+                  ? isLight
+                    ? 'bg-amber-500 text-white border-amber-600 scale-[0.985]'
+                    : 'bg-amber-500/25 border-amber-400/65 text-amber-100 scale-[0.985]'
                   : recording
-                    ? 'bg-gradient-to-r from-blue-600/40 via-indigo-500/40 to-blue-600/40 border-blue-400/80 text-white shadow-[0_0_26px_rgba(59,130,246,0.4)] scale-[0.985]'
-                    : 'tile-surface bg-gradient-to-b from-[#1a2234] to-[#141926] border-blue-400/25 text-zinc-100',
+                    ? isLight
+                      ? 'bg-blue-600 text-white border-blue-700 shadow-[0_6px_22px_rgba(37,99,235,0.35)] scale-[0.985]'
+                      : 'bg-gradient-to-r from-blue-600/40 via-indigo-500/40 to-blue-600/40 border-blue-400/80 text-white shadow-[0_0_26px_rgba(59,130,246,0.4)] scale-[0.985]'
+                    : 'tile-surface ak-voice-idle',
             )}
           >
             {!connected ? (
               <>
-                <Mic className="w-4.5 h-4.5 text-zinc-500" />
+                <Mic className="w-4.5 h-4.5 ak-text-3" />
                 <span>连接电脑后启用语音键</span>
               </>
             ) : canceling ? (
               <>
-                <X className="w-5 h-5 text-amber-300" />
+                <X className={clsx('w-5 h-5', isLight ? 'text-white' : 'text-amber-300')} />
                 <span>松开手指 · 立即取消本次语音</span>
               </>
             ) : recording ? (
@@ -200,23 +220,38 @@ export function VoiceTextDock() {
                 {/* Live 11-Bar Symmetric Audio Waveform */}
                 <div className="flex items-center gap-[3px] h-6" aria-hidden="true">
                   {WAVE_WEIGHTS.map((w, idx) => {
-                    const barHeight = Math.max(5, Math.round(24 * Math.min(1, effectiveLevel * w * 1.25)))
+                    const barHeight = Math.max(
+                      5,
+                      Math.round(24 * Math.min(1, effectiveLevel * w * 1.25)),
+                    )
                     return (
                       <span
                         key={idx}
                         style={{ height: `${barHeight}px` }}
-                        className="w-[3.5px] rounded-full bg-blue-300 transition-[height] duration-75"
+                        className={clsx(
+                          'w-[3.5px] rounded-full transition-[height] duration-75',
+                          isLight ? 'bg-white' : 'bg-blue-300',
+                        )}
                       />
                     )
                   })}
                 </div>
                 <span className="text-[13.5px] truncate">
-                  {bindingTrimmed ? `${bindingTrimmed} 按住中 · 松开发送` : '录音中 · 松开发送（上滑取消）'}
+                  {bindingTrimmed
+                    ? `${bindingTrimmed} 按住中 · 松开发送`
+                    : '录音中 · 松开发送（上滑取消）'}
                 </span>
               </>
             ) : (
               <>
-                <span className="w-8 h-8 rounded-xl bg-blue-500/22 border border-blue-400/25 text-blue-300 inline-flex items-center justify-center shrink-0">
+                <span
+                  className={clsx(
+                    'w-8 h-8 rounded-xl border inline-flex items-center justify-center shrink-0',
+                    isLight
+                      ? 'bg-blue-600/12 border-blue-500/25 text-blue-600'
+                      : 'bg-blue-500/22 border-blue-400/25 text-blue-300',
+                  )}
+                >
                   <Mic className="w-4 h-4" />
                 </span>
                 <span className="text-[14.5px] font-bold tracking-wide truncate">
@@ -233,7 +268,7 @@ export function VoiceTextDock() {
                 triggerHaptic('tap')
                 setTextMode((m) => (m === 'paste' ? 'type' : 'paste'))
               }}
-              className="tile-surface h-[54px] px-3 rounded-[18px] bg-[#151923] border border-white/[0.1] text-xs font-medium text-zinc-300 shrink-0"
+              className="tile-surface ak-elevated ak-text-2 h-[54px] px-3 rounded-[18px] border text-xs font-medium shrink-0"
               aria-label="切换文本注入方式"
             >
               {textMode === 'paste' ? '粘贴' : '键入'}
@@ -251,7 +286,7 @@ export function VoiceTextDock() {
                 }
               }}
               placeholder="输入文字或手机语音直达电脑…"
-              className="flex-1 min-w-0 h-[54px] px-3.5 rounded-[18px] bg-[#141822] border border-white/[0.11] text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-blue-400/60"
+              className="ak-input flex-1 min-w-0 h-[54px] px-3.5 rounded-[18px] border text-sm focus:outline-none focus:border-blue-500"
             />
 
             <button
@@ -262,8 +297,8 @@ export function VoiceTextDock() {
               className={clsx(
                 'h-[54px] w-12 rounded-[18px] inline-flex items-center justify-center border transition-colors shrink-0',
                 sendDisabled
-                  ? 'bg-white/[0.03] border-white/[0.05] text-zinc-600'
-                  : 'tile-surface bg-[#181d29] border-white/[0.12] text-zinc-100',
+                  ? 'ak-pill ak-text-3 opacity-50'
+                  : 'tile-surface ak-elevated ak-text-1',
               )}
             >
               <Send className="w-4 h-4" />
@@ -277,8 +312,8 @@ export function VoiceTextDock() {
               className={clsx(
                 'h-[54px] px-3.5 rounded-[18px] inline-flex items-center justify-center gap-1 text-xs font-semibold transition-all shrink-0',
                 sendDisabled
-                  ? 'bg-blue-500/15 text-blue-300/35 border border-blue-400/10'
-                  : 'bg-blue-500 text-white border border-blue-400 shadow-sm shadow-blue-500/30 active:scale-95',
+                  ? 'bg-blue-500/15 text-blue-400/50 border border-blue-400/15'
+                  : 'bg-blue-600 text-white border border-blue-500 shadow-sm shadow-blue-500/25 active:scale-95',
               )}
             >
               <CornerDownLeft className="w-4 h-4" />

@@ -281,6 +281,31 @@ class OutboundArbiter {
         }
     }
 
+    /**
+     * Flushes any pending relative trackpad delta and immediately sends a single AKP1
+     * normalized center frame (0.5, 0.5) so the desktop cursor snaps to primary screen center.
+     */
+    fun sendPointerRecenter(): Boolean {
+        val nowUs = WireFrameCodec.nowSampleTimeUs()
+        synchronized(sendLock) {
+            flushScheduled = false
+            outboundHandler.removeCallbacks(flushRunnable)
+            flushPendingTrackpadLocked()
+            val socket = activeSocket ?: return false
+            if (sessionId.isEmpty() || inputGeneration <= 0L) return false
+            val seq = nextSeq++
+            val frame = WireFrameCodec.encodeAkp1(
+                kind = WireFrameCodec.KIND_GYRO_ABS,
+                inputGeneration = inputGeneration,
+                seq = seq,
+                sampleTimeUs = nowUs,
+                x = 0.5f,
+                y = 0.5f
+            ) ?: return false
+            return socket.send(frame)
+        }
+    }
+
     fun sendControlFrame(jsonPayload: String): Boolean {
         synchronized(sendLock) {
             val socket = activeSocket ?: return false

@@ -3,6 +3,8 @@ package com.axonkey.mobile
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.res.Configuration
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
@@ -17,6 +19,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
 import androidx.webkit.WebViewAssetLoader
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -122,7 +125,36 @@ class MainActivity : AppCompatActivity() {
         }
 
         setContentView(webView)
+        applyWindowSystemBarTheme(resolveSystemNightMode(resources.configuration))
         webView.loadUrl("https://appassets.androidplatform.net/assets/web/index.html")
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val isDark = resolveSystemNightMode(newConfig)
+        emitJs("window.__axonkeyNativeOnSystemDarkChanged && window.__axonkeyNativeOnSystemDarkChanged($isDark);")
+    }
+
+    private fun resolveSystemNightMode(config: Configuration): Boolean {
+        return (config.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    }
+
+    @Suppress("DEPRECATION")
+    private fun applyWindowSystemBarTheme(isDark: Boolean) {
+        val statusBg = if (isDark) Color.parseColor("#0d1017") else Color.parseColor("#f4f6fb")
+        val navBg = if (isDark) Color.parseColor("#0c0f16") else Color.parseColor("#e7ecf4")
+        val canvasBg = if (isDark) Color.parseColor("#0a0c10") else Color.parseColor("#eef2f7")
+
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        window.statusBarColor = statusBg
+        window.navigationBarColor = navBg
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !isDark
+            isAppearanceLightNavigationBars = !isDark
+        }
+        if (::webView.isInitialized) {
+            webView.setBackgroundColor(canvasBg)
+        }
     }
 
     override fun onPause() {
@@ -328,6 +360,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun isSystemDarkMode(): Boolean = resolveSystemNightMode(resources.configuration)
+
+        @JavascriptInterface
+        fun setSystemBarTheme(isDark: Boolean) {
+            runOnUiThread {
+                if (!isDestroyed) {
+                    applyWindowSystemBarTheme(isDark)
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun openQrScanner() {
             runOnUiThread {
                 val options = ScanOptions().apply {
@@ -474,6 +518,12 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun recenterGyro() {
             gyroController.recenter()
+        }
+
+        @JavascriptInterface
+        fun recenterCursor(): Boolean {
+            gyroController.recenter()
+            return arbiter.sendPointerRecenter()
         }
 
         @JavascriptInterface

@@ -34,6 +34,7 @@ export function App() {
   const deck = useMobileStore((s) => s.deck)
   const workspaceMode = useMobileStore((s) => s.workspaceMode)
   const layoutEditing = useMobileStore((s) => s.layoutEditing)
+  const effectiveTheme = useMobileStore((s) => s.effectiveTheme)
   const conflictBanner = useMobileStore((s) => s.conflictBanner)
   const errorToast = useMobileStore((s) => s.errorToast)
 
@@ -46,6 +47,8 @@ export function App() {
   const discoverAndReconnect = useMobileStore((s) => s.discoverAndReconnect)
   const dismissConflict = useMobileStore((s) => s.dismissConflict)
   const clearError = useMobileStore((s) => s.clearError)
+
+  const isLight = effectiveTheme === 'light'
 
   useEffect(() => {
     init()
@@ -81,7 +84,7 @@ export function App() {
   const navItems: { id: WorkspaceMode; icon: typeof Gamepad2; label: string }[] = [
     { id: 'remote', icon: Gamepad2, label: '遥控器' },
     { id: 'deck', icon: LayoutGrid, label: '快捷面板' },
-    { id: 'pointer', icon: MousePointer2, label: '触控·空鼠' },
+    { id: 'pointer', icon: MousePointer2, label: '触控·飞鼠' },
   ]
 
   const handlePrimaryTabSelect = (mode: WorkspaceMode) => {
@@ -100,9 +103,9 @@ export function App() {
   }
 
   return (
-    <div className="h-full w-full flex flex-col bg-[#0a0c10] text-zinc-100 overflow-hidden">
+    <div className="ak-canvas h-full w-full flex flex-col overflow-hidden">
       {/* Sleek Hardware Status Header */}
-      <header className="shrink-0 flex items-center justify-between gap-2 px-3.5 pb-2.5 safe-top border-b border-white/[0.06] bg-[#0d1017]/95 backdrop-blur-md">
+      <header className="ak-chrome shrink-0 flex items-center justify-between gap-2 px-3.5 pb-2.5 safe-top border-b backdrop-blur-md">
         {phase === 'active' ? (
           <button
             type="button"
@@ -110,26 +113,38 @@ export function App() {
               triggerHaptic('tap')
               setPairingOpen(true)
             }}
-            className="flex items-center gap-2 min-w-0 h-9 px-3 rounded-full bg-white/[0.045] border border-white/[0.09] active:scale-[0.98] transition-transform"
+            className="ak-pill flex items-center gap-2 min-w-0 h-9 px-3 rounded-full border active:scale-[0.98] transition-transform"
           >
             <span
               className={clsx(
                 'w-2 h-2 rounded-full shrink-0',
                 isOnlineReal
-                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.85)]'
-                  : 'bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.65)]',
+                  ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.75)]'
+                  : 'bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.6)]',
               )}
             />
-            <span className="text-[12.5px] font-semibold text-zinc-100 truncate max-w-[110px]">
+            <span className="ak-text-1 text-[12.5px] font-semibold truncate max-w-[110px]">
               {isDemoMode ? '模拟体验' : hostName}
             </span>
             {isDemoMode ? (
-              <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-[10.5px] font-medium text-blue-300 shrink-0">
+              <span
+                className={clsx(
+                  'px-2 py-0.5 rounded-full text-[10.5px] font-semibold shrink-0',
+                  isLight ? 'bg-blue-600/12 text-blue-700' : 'bg-blue-500/20 text-blue-300',
+                )}
+              >
                 扫码连电脑
               </span>
             ) : (
               (contextBadge || context.profileName) && (
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/25 text-[10.5px] font-medium text-emerald-200 truncate max-w-[96px]">
+                <span
+                  className={clsx(
+                    'px-2 py-0.5 rounded-full border text-[10.5px] font-medium truncate max-w-[96px]',
+                    isLight
+                      ? 'bg-emerald-600/10 border-emerald-600/25 text-emerald-800'
+                      : 'bg-emerald-500/15 border-emerald-400/25 text-emerald-200',
+                  )}
+                >
                   {contextBadge ?? context.profileName}
                 </span>
               )
@@ -147,14 +162,24 @@ export function App() {
                   setPairingOpen(true)
                 }
               }}
-              className="flex items-center gap-2 min-w-0 h-9 px-3 rounded-full bg-amber-500/12 border border-amber-400/35 text-amber-200 active:scale-[0.98] transition-transform"
+              className={clsx(
+                'flex items-center gap-2 min-w-0 h-9 px-3 rounded-full border active:scale-[0.98] transition-transform',
+                isLight
+                  ? 'bg-amber-500/12 border-amber-500/35 text-amber-900'
+                  : 'bg-amber-500/12 border-amber-400/35 text-amber-200',
+              )}
             >
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
               <span className="text-[12.5px] font-semibold truncate max-w-[108px]">
                 {isConnecting ? '正在重连…' : savedHosts.length > 0 ? '未连接电脑' : '点击扫码配对'}
               </span>
               {savedHosts.length > 0 && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-400/20 text-[10.5px] font-semibold text-amber-100 shrink-0">
+                <span
+                  className={clsx(
+                    'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold shrink-0',
+                    isLight ? 'bg-amber-500/20 text-amber-900' : 'bg-amber-400/20 text-amber-100',
+                  )}
+                >
                   <RefreshCw className={clsx('w-3 h-3', isConnecting && 'animate-spin')} />
                   重试
                 </span>
@@ -175,8 +200,10 @@ export function App() {
             className={clsx(
               'tile-surface h-9 px-2.5 rounded-xl border inline-flex items-center justify-center gap-1 text-xs font-semibold transition-colors',
               layoutEditing
-                ? 'bg-blue-500/25 border-blue-400/60 text-blue-100 shadow-[0_0_14px_rgba(59,130,246,0.28)]'
-                : 'bg-[#151923] border-white/[0.09] text-zinc-300',
+                ? isLight
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-[0_2px_10px_rgba(37,99,235,0.28)]'
+                  : 'bg-blue-500/25 border-blue-400/60 text-blue-100 shadow-[0_0_14px_rgba(59,130,246,0.28)]'
+                : 'ak-elevated ak-text-2',
             )}
           >
             <PencilRuler className="w-3.5 h-3.5" />
@@ -190,7 +217,7 @@ export function App() {
               setPairingOpen(true)
             }}
             aria-label="连接与配对"
-            className="tile-surface h-9 w-9 rounded-xl bg-[#151923] border border-white/[0.09] inline-flex items-center justify-center text-zinc-300"
+            className="tile-surface ak-elevated ak-text-2 h-9 w-9 rounded-xl border inline-flex items-center justify-center"
           >
             {savedHosts.length > 0 ? (
               <Wifi className="w-4 h-4" />
@@ -206,7 +233,7 @@ export function App() {
               setFeelSheetOpen(true)
             }}
             aria-label="本地手感设置"
-            className="tile-surface h-9 w-9 rounded-xl bg-[#151923] border border-white/[0.09] inline-flex items-center justify-center text-zinc-300"
+            className="tile-surface ak-elevated ak-text-2 h-9 w-9 rounded-xl border inline-flex items-center justify-center"
           >
             <SlidersHorizontal className="w-4 h-4" />
           </button>
@@ -215,7 +242,14 @@ export function App() {
 
       {/* Non-Intrusive Toast Banners */}
       {conflictBanner && (
-        <div className="mx-3 mt-2 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-between gap-2 text-xs text-amber-200 shrink-0">
+        <div
+          className={clsx(
+            'mx-3 mt-2 px-3 py-1.5 rounded-xl border flex items-center justify-between gap-2 text-xs shrink-0',
+            isLight
+              ? 'bg-amber-500/15 border-amber-500/35 text-amber-900'
+              : 'bg-amber-500/15 border-amber-400/30 text-amber-200',
+          )}
+        >
           <span className="truncate">{conflictBanner}</span>
           <button type="button" onClick={dismissConflict} className="shrink-0 underline">
             知道了
@@ -223,7 +257,14 @@ export function App() {
         </div>
       )}
       {errorToast && (
-        <div className="mx-3 mt-2 px-3 py-1.5 rounded-xl bg-rose-500/15 border border-rose-400/30 flex items-center justify-between gap-2 text-xs text-rose-200 shrink-0">
+        <div
+          className={clsx(
+            'mx-3 mt-2 px-3 py-1.5 rounded-xl border flex items-center justify-between gap-2 text-xs shrink-0',
+            isLight
+              ? 'bg-rose-500/12 border-rose-500/30 text-rose-800'
+              : 'bg-rose-500/15 border-rose-400/30 text-rose-200',
+          )}
+        >
           <span className="truncate">{errorToast}</span>
           <button type="button" onClick={clearError} className="shrink-0 underline">
             关闭
@@ -259,8 +300,10 @@ export function App() {
                           className={clsx(
                             'h-7 px-3 rounded-full text-xs font-semibold shrink-0 transition-colors border',
                             active
-                              ? 'bg-zinc-100 text-zinc-950 border-white'
-                              : 'bg-[#141822] text-zinc-400 border-white/[0.07]',
+                              ? isLight
+                                ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                                : 'bg-zinc-100 text-zinc-950 border-white'
+                              : 'ak-elevated ak-text-2',
                           )}
                         >
                           {p.name}
@@ -293,8 +336,10 @@ export function App() {
                           className={clsx(
                             'h-7 px-3 rounded-full text-xs font-semibold shrink-0 transition-colors border',
                             active
-                              ? 'bg-zinc-100 text-zinc-950 border-white'
-                              : 'bg-[#141822] text-zinc-400 border-white/[0.07]',
+                              ? isLight
+                                ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                                : 'bg-zinc-100 text-zinc-950 border-white'
+                              : 'ak-elevated ak-text-2',
                           )}
                         >
                           {p.name}
@@ -311,9 +356,9 @@ export function App() {
                       setPageManagerOpen(true)
                     }}
                     aria-label="新建自定义页面"
-                    className="h-7 px-2.5 rounded-full bg-white/[0.05] border border-white/[0.09] text-[11px] font-semibold text-zinc-300 inline-flex items-center gap-0.5 shrink-0"
+                    className="ak-pill ak-text-2 h-7 px-2.5 rounded-full border text-[11px] font-semibold inline-flex items-center gap-0.5 shrink-0"
                   >
-                    <Plus className="w-3 h-3 text-blue-400" />
+                    <Plus className={clsx('w-3 h-3', isLight ? 'text-blue-600' : 'text-blue-400')} />
                     <span>新页面</span>
                   </button>
                 </div>
@@ -334,11 +379,8 @@ export function App() {
       </main>
 
       {/* Ergonomic Thumb-Zone Primary Mode Segmented Bar (Right Above Voice/Text Dock) */}
-      <nav
-        aria-label="主工作区切换"
-        className="shrink-0 px-3 pt-2 pb-1 bg-[#0c0f16] border-t border-white/[0.07]"
-      >
-        <div className="grid grid-cols-3 gap-1.5 p-1.5 rounded-[20px] bg-[#121620] border border-white/[0.08]">
+      <nav aria-label="主工作区切换" className="ak-dock shrink-0 px-3 pt-2 pb-1 border-t">
+        <div className="ak-seg grid grid-cols-3 gap-1.5 p-1.5 rounded-[20px] border">
           {navItems.map((item) => {
             const Icon = item.icon
             const active = workspaceMode === item.id
@@ -353,11 +395,19 @@ export function App() {
                 className={clsx(
                   'h-12 rounded-2xl inline-flex items-center justify-center gap-2 text-[13px] font-semibold transition-all touch-none',
                   active
-                    ? 'tile-surface bg-[#22293a] text-white border border-blue-400/30 shadow-sm'
-                    : 'text-zinc-400 active:text-zinc-200',
+                    ? clsx(
+                        'tile-surface ak-active-tab border shadow-xs',
+                        isLight ? 'border-blue-500/35' : 'border-blue-400/30',
+                      )
+                    : 'ak-text-2',
                 )}
               >
-                <Icon className={clsx('w-4 h-4', active ? 'text-blue-400' : 'text-zinc-500')} />
+                <Icon
+                  className={clsx(
+                    'w-4 h-4',
+                    active ? (isLight ? 'text-blue-600' : 'text-blue-400') : 'ak-text-3',
+                  )}
+                />
                 <span>{item.label}</span>
               </button>
             )

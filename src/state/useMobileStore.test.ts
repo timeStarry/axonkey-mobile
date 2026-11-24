@@ -92,5 +92,15 @@ describe('useMobileStore (v2 LAN Auto-Discovery & Live Telemetry)', () => {
 
     useMobileStore.getState().clearGyroGuard()
     expect(useMobileStore.getState().gyroGuard).toBeNull()
+
+    // System dark-mode changes dynamically update effectiveTheme only when themeMode === 'system'
+    useMobileStore.getState().setThemeMode('system')
+    window.__axonkeyNativeOnSystemDarkChanged?.(false)
+    expect(useMobileStore.getState().effectiveTheme).toBe('light')
+    expect(document.documentElement.dataset.theme).toBe('light')
+
+    window.__axonkeyNativeOnSystemDarkChanged?.(true)
+    expect(useMobileStore.getState().effectiveTheme).toBe('dark')
+    expect(document.documentElement.dataset.theme).toBe('dark')
   })
 })

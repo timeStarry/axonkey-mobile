@@ -1,5 +1,54 @@
 @import "tailwindcss";
 
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --ak-canvas: #0a0c10;
+  --ak-chrome: rgba(13, 16, 23, 0.94);
+  --ak-dock: #0c0f16;
+  --ak-sheet: #121620;
+  --ak-seg: #11151e;
+  --ak-well: #0d1018;
+  --ak-elevated: #151923;
+  --ak-elevated-alt: #181d29;
+  --ak-input: #131824;
+  --ak-active-tab: #22293a;
+  --ak-pill: rgba(255, 255, 255, 0.05);
+  --ak-pill-strong: rgba(255, 255, 255, 0.09);
+  --ak-border: rgba(255, 255, 255, 0.085);
+  --ak-border-strong: rgba(255, 255, 255, 0.14);
+  --ak-border-subtle: rgba(255, 255, 255, 0.05);
+  --ak-text: #f4f4f5;
+  --ak-text-2: #a1a1aa;
+  --ak-text-3: #71717a;
+  --ak-backdrop: rgba(0, 0, 0, 0.74);
+  --ak-code-chip: rgba(0, 0, 0, 0.28);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --ak-canvas: #eef2f7;
+  --ak-chrome: rgba(244, 246, 251, 0.94);
+  --ak-dock: #e7ecf4;
+  --ak-sheet: #f8fafd;
+  --ak-seg: #dde4ef;
+  --ak-well: #eef2f8;
+  --ak-elevated: #ffffff;
+  --ak-elevated-alt: #f4f7fb;
+  --ak-input: #ffffff;
+  --ak-active-tab: #ffffff;
+  --ak-pill: rgba(15, 23, 42, 0.05);
+  --ak-pill-strong: rgba(15, 23, 42, 0.085);
+  --ak-border: rgba(15, 23, 42, 0.10);
+  --ak-border-strong: rgba(15, 23, 42, 0.16);
+  --ak-border-subtle: rgba(15, 23, 42, 0.055);
+  --ak-text: #0f172a;
+  --ak-text-2: #475569;
+  --ak-text-3: #64748b;
+  --ak-backdrop: rgba(15, 23, 42, 0.40);
+  --ak-code-chip: rgba(15, 23, 42, 0.055);
+}
+
 @layer base {
   html,
   body,
@@ -8,22 +57,127 @@
     width: 100%;
     margin: 0;
     padding: 0;
-    background-color: #0a0c10;
-    color: #f4f4f5;
+    background-color: var(--ak-canvas);
+    color: var(--ak-text);
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI",
       "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior: none;
+    transition:
+      background-color 160ms ease,
+      color 160ms ease;
   }
 }
 
-/* Precision anodized chassis & keycap surfaces */
+/* Semantic Hardware Surfaces */
+.ak-canvas {
+  background-color: var(--ak-canvas);
+  color: var(--ak-text);
+}
+
+.ak-chrome {
+  background-color: var(--ak-chrome);
+  border-color: var(--ak-border);
+}
+
+.ak-dock {
+  background-color: var(--ak-dock);
+  border-color: var(--ak-border);
+}
+
+.ak-sheet {
+  background-color: var(--ak-sheet);
+  border-color: var(--ak-border-strong);
+  color: var(--ak-text);
+}
+
+.ak-backdrop {
+  background-color: var(--ak-backdrop);
+}
+
+.ak-seg {
+  background-color: var(--ak-seg);
+  border-color: var(--ak-border);
+}
+
+.ak-well {
+  background-color: var(--ak-well);
+  border-color: var(--ak-border);
+}
+
+.ak-elevated {
+  background-color: var(--ak-elevated);
+  border-color: var(--ak-border);
+  color: var(--ak-text);
+}
+
+.ak-elevated-alt {
+  background-color: var(--ak-elevated-alt);
+  border-color: var(--ak-border);
+  color: var(--ak-text-2);
+}
+
+.ak-input {
+  background-color: var(--ak-input);
+  border-color: var(--ak-border-strong);
+  color: var(--ak-text);
+}
+
+.ak-input::placeholder {
+  color: var(--ak-text-3);
+}
+
+.ak-active-tab {
+  background-color: var(--ak-active-tab);
+  color: var(--ak-text);
+}
+
+.ak-pill {
+  background-color: var(--ak-pill);
+  border-color: var(--ak-border);
+}
+
+.ak-pill-strong {
+  background-color: var(--ak-pill-strong);
+  border-color: var(--ak-border-strong);
+}
+
+.ak-code-chip {
+  background-color: var(--ak-code-chip);
+  border-color: var(--ak-border-subtle);
+}
+
+.ak-text-1 {
+  color: var(--ak-text);
+}
+
+.ak-text-2 {
+  color: var(--ak-text-2);
+}
+
+.ak-text-3 {
+  color: var(--ak-text-3);
+}
+
+.ak-border {
+  border-color: var(--ak-border);
+}
+
+/* Precision anodized / ceramic chassis & keycap surfaces */
 .chassis-well {
   background: linear-gradient(180deg, #0e1117 0%, #12161f 100%);
+  border-color: var(--ak-border);
   box-shadow:
     inset 0 2px 6px rgba(0, 0, 0, 0.65),
     0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="light"] .chassis-well {
+  background: linear-gradient(180deg, #e1e7f1 0%, #e9eef7 100%);
+  box-shadow:
+    inset 0 2px 6px rgba(15, 23, 42, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .tile-surface {
@@ -39,12 +193,29 @@
     background-color 120ms ease;
 }
 
+[data-theme="light"] .tile-surface {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 65%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.07),
+    0 2px 7px rgba(15, 23, 42, 0.075),
+    0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
 .tile-surface:active,
 .tile-pressed {
   transform: scale(0.97);
   box-shadow:
     inset 0 2px 7px rgba(0, 0, 0, 0.65),
     0 0 0 1px rgba(96, 165, 250, 0.22);
+}
+
+[data-theme="light"] .tile-surface:active,
+[data-theme="light"] .tile-pressed {
+  transform: scale(0.97);
+  box-shadow:
+    inset 0 2px 5px rgba(15, 23, 42, 0.12),
+    0 0 0 1px rgba(37, 99, 235, 0.28);
 }
 
 .trackpad-dots {
@@ -58,6 +229,43 @@
   box-shadow:
     inset 0 2px 10px rgba(0, 0, 0, 0.65),
     0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="light"] .trackpad-dots {
+  background-color: #e4eaf3;
+  background-image:
+    radial-gradient(rgba(15, 23, 42, 0.11) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(15, 23, 42, 0.03) 100%);
+  background-size:
+    16px 16px,
+    100% 100%;
+  box-shadow:
+    inset 0 2px 9px rgba(15, 23, 42, 0.085),
+    0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.ak-voice-idle {
+  background: linear-gradient(180deg, #1a2234 0%, #141926 100%);
+  border-color: rgba(96, 165, 250, 0.26);
+  color: #f4f4f5;
+}
+
+[data-theme="light"] .ak-voice-idle {
+  background: linear-gradient(180deg, #ffffff 0%, #eff5ff 100%);
+  border-color: rgba(37, 99, 235, 0.28);
+  color: #0f172a;
+}
+
+.ak-clutch-engaged {
+  background: linear-gradient(180deg, #162742 0%, #101a2c 100%);
+  border-color: rgba(96, 165, 250, 0.62);
+  box-shadow: inset 0 0 32px rgba(59, 130, 246, 0.22);
+}
+
+[data-theme="light"] .ak-clutch-engaged {
+  background: linear-gradient(180deg, #dbeafe 0%, #eff6ff 100%);
+  border-color: rgba(37, 99, 235, 0.55);
+  box-shadow: inset 0 0 28px rgba(37, 99, 235, 0.14);
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -74,7 +282,7 @@ input[type="range"].ak-slider {
   appearance: none;
   height: 6px;
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--ak-pill-strong);
   outline: none;
 }
 
@@ -84,9 +292,9 @@ input[type="range"].ak-slider::-webkit-slider-thumb {
   width: 20px;
   height: 20px;
   border-radius: 9999px;
-  background: #f4f4f5;
-  border: 2px solid #3b82f6;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  background: #ffffff;
+  border: 2.5px solid #3b82f6;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.3);
   cursor: pointer;
 }
 

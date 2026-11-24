@@ -84,19 +84,18 @@ export function getTileIcon(iconName: string): LucideIcon {
   return CONTROLLED_ICONS[iconName] ?? Zap
 }
 
-export const ACCENT_STYLES: Record<
-  TileAccent,
-  {
-    card: string
-    pressedGlow: string
-    iconBg: string
-    iconText: string
-    silkscreen: string
-    ring: string
-    swatch: string
-    label: string
-  }
-> = {
+export interface AccentVisualStyle {
+  card: string
+  pressedGlow: string
+  iconBg: string
+  iconText: string
+  silkscreen: string
+  ring: string
+  swatch: string
+  label: string
+}
+
+export const ACCENT_STYLES: Record<TileAccent, AccentVisualStyle> = {
   slate: {
     card: 'bg-[#151922] border-white/[0.08]',
     pressedGlow: 'border-zinc-300/35 shadow-[0_0_16px_rgba(244,244,245,0.08)]',
@@ -114,7 +113,7 @@ export const ACCENT_STYLES: Record<
     iconText: 'text-blue-300',
     silkscreen: 'text-blue-300/85',
     ring: 'ring-blue-400/60',
-    swatch: 'bg-blue-400',
+    swatch: 'bg-blue-500',
     label: '湛蓝',
   },
   emerald: {
@@ -124,7 +123,7 @@ export const ACCENT_STYLES: Record<
     iconText: 'text-emerald-300',
     silkscreen: 'text-emerald-300/85',
     ring: 'ring-emerald-400/60',
-    swatch: 'bg-emerald-400',
+    swatch: 'bg-emerald-500',
     label: '翡翠',
   },
   amber: {
@@ -134,7 +133,7 @@ export const ACCENT_STYLES: Record<
     iconText: 'text-amber-300',
     silkscreen: 'text-amber-300/85',
     ring: 'ring-amber-400/60',
-    swatch: 'bg-amber-400',
+    swatch: 'bg-amber-500',
     label: '琥珀',
   },
   rose: {
@@ -144,7 +143,7 @@ export const ACCENT_STYLES: Record<
     iconText: 'text-rose-300',
     silkscreen: 'text-rose-300/85',
     ring: 'ring-rose-400/60',
-    swatch: 'bg-rose-400',
+    swatch: 'bg-rose-500',
     label: '绯红',
   },
   violet: {
@@ -154,9 +153,77 @@ export const ACCENT_STYLES: Record<
     iconText: 'text-violet-300',
     silkscreen: 'text-violet-300/85',
     ring: 'ring-violet-400/60',
-    swatch: 'bg-violet-400',
+    swatch: 'bg-violet-500',
     label: '星紫',
   },
+}
+
+export const LIGHT_ACCENT_STYLES: Record<TileAccent, AccentVisualStyle> = {
+  slate: {
+    card: 'bg-white border-slate-900/[0.10]',
+    pressedGlow: 'border-slate-400/65 shadow-[0_0_14px_rgba(15,23,42,0.08)]',
+    iconBg: 'bg-slate-900/[0.06]',
+    iconText: 'text-slate-700',
+    silkscreen: 'text-slate-500',
+    ring: 'ring-slate-400/60',
+    swatch: 'bg-slate-400',
+    label: '石墨',
+  },
+  blue: {
+    card: 'bg-[#f1f6ff] border-blue-500/25',
+    pressedGlow: 'border-blue-500/60 shadow-[0_0_16px_rgba(37,99,235,0.2)]',
+    iconBg: 'bg-blue-600/12',
+    iconText: 'text-blue-700',
+    silkscreen: 'text-blue-700/80',
+    ring: 'ring-blue-500/60',
+    swatch: 'bg-blue-500',
+    label: '湛蓝',
+  },
+  emerald: {
+    card: 'bg-[#eefcf5] border-emerald-500/25',
+    pressedGlow: 'border-emerald-500/60 shadow-[0_0_16px_rgba(16,185,129,0.2)]',
+    iconBg: 'bg-emerald-600/12',
+    iconText: 'text-emerald-700',
+    silkscreen: 'text-emerald-700/80',
+    ring: 'ring-emerald-500/60',
+    swatch: 'bg-emerald-500',
+    label: '翡翠',
+  },
+  amber: {
+    card: 'bg-[#fffbeb] border-amber-500/30',
+    pressedGlow: 'border-amber-500/60 shadow-[0_0_16px_rgba(245,158,11,0.2)]',
+    iconBg: 'bg-amber-500/15',
+    iconText: 'text-amber-700',
+    silkscreen: 'text-amber-800/80',
+    ring: 'ring-amber-500/60',
+    swatch: 'bg-amber-500',
+    label: '琥珀',
+  },
+  rose: {
+    card: 'bg-[#fff1f3] border-rose-500/25',
+    pressedGlow: 'border-rose-500/60 shadow-[0_0_16px_rgba(244,63,94,0.2)]',
+    iconBg: 'bg-rose-600/12',
+    iconText: 'text-rose-700',
+    silkscreen: 'text-rose-700/80',
+    ring: 'ring-rose-500/60',
+    swatch: 'bg-rose-500',
+    label: '绯红',
+  },
+  violet: {
+    card: 'bg-[#f6f3ff] border-violet-500/25',
+    pressedGlow: 'border-violet-500/60 shadow-[0_0_16px_rgba(139,92,246,0.2)]',
+    iconBg: 'bg-violet-600/12',
+    iconText: 'text-violet-700',
+    silkscreen: 'text-violet-700/80',
+    ring: 'ring-violet-500/60',
+    swatch: 'bg-violet-500',
+    label: '星紫',
+  },
+}
+
+export function getAccentStyle(accent: TileAccent, isLight = false): AccentVisualStyle {
+  const table = isLight ? LIGHT_ACCENT_STYLES : ACCENT_STYLES
+  return table[accent] ?? table.slate
 }
 
 export const ACCENT_KEYS: TileAccent[] = ['slate', 'blue', 'emerald', 'amber', 'rose', 'violet']

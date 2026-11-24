@@ -19,10 +19,17 @@ export type HapticKind =
   | 'voiceStop'
   | 'recenter'
 
+export type ThemeMode = 'system' | 'light' | 'dark'
+export type EffectiveTheme = 'light' | 'dark'
+export type PointerTabMode = 'trackpad' | 'airmouse'
+export type AirMouseFeelMode = 'relative' | 'laser'
+
 export interface LocalFeelPreferences {
   deviceName: string
+  themeMode: ThemeMode
   gyroSensitivity: number
-  preferredPointerSubMode: 'trackpad' | 'relative' | 'absolute'
+  preferredPointerTab: PointerTabMode
+  airMouseFeel: AirMouseFeelMode
   hapticsEnabled: boolean
   keepScreenOn: boolean
   preferredDockMode: 'voice' | 'text'
@@ -31,6 +38,8 @@ export interface LocalFeelPreferences {
 export interface AxonkeyAndroidBridge {
   haptic(kind: string): void
   getDefaultDeviceName?(): string
+  isSystemDarkMode?(): boolean
+  setSystemBarTheme?(isDark: boolean): void
   setKeepScreenOn(enabled: boolean): void
   openQrScanner(): void
   connectWss(url: string, hostId: string, caCertDerB64: string, subprotocol: string): void
@@ -55,6 +64,7 @@ export interface AxonkeyAndroidBridge {
   setGyroConfig?(mode: GyroMode, sensitivity: number): void
   setGyroClutch?(engaged: boolean): void
   recenterGyro?(): void
+  recenterCursor?(): boolean
   startVoiceStream?(requestId: string): number
   stopVoiceStream?(streamId: number, requestId: string): void
   cancelVoiceStream?(streamId: number, reason: string): void
@@ -73,6 +83,7 @@ declare global {
     __axonkeyNativeOnVoiceLevel?: (level: number) => void
     __axonkeyNativeOnGyroState?: (state: string) => void
     __axonkeyNativeOnHostsDiscovered?: (jsonArray: string) => void
+    __axonkeyNativeOnSystemDarkChanged?: (isDark: boolean) => void
   }
 }
 
@@ -96,8 +107,10 @@ export function getDefaultPhoneName(): string {
 
 export const DEFAULT_LOCAL_FEEL: LocalFeelPreferences = {
   deviceName: getDefaultPhoneName(),
+  themeMode: 'system',
   gyroSensitivity: 1.2,
-  preferredPointerSubMode: 'trackpad',
+  preferredPointerTab: 'trackpad',
+  airMouseFeel: 'relative',
   hapticsEnabled: true,
   keepScreenOn: true,
   preferredDockMode: 'voice',
@@ -109,26 +122,46 @@ export function setHapticsEnabled(enabled: boolean): void {
   hapticsEnabledRuntime = enabled
 }
 
+interface LegacyStoredFeel extends Partial<LocalFeelPreferences> {
+  preferredPointerSubMode?: 'trackpad' | 'relative' | 'absolute'
+}
+
 export function loadLocalFeelPreferences(): LocalFeelPreferences {
   const defaultName = getDefaultPhoneName()
   if (typeof window === 'undefined') return { ...DEFAULT_LOCAL_FEEL, deviceName: defaultName }
   try {
     const raw = window.localStorage.getItem(LOCAL_FEEL_STORAGE_KEY)
     if (!raw) return { ...DEFAULT_LOCAL_FEEL, deviceName: defaultName }
-    const parsed = JSON.parse(raw) as Partial<LocalFeelPreferences>
+    const parsed = JSON.parse(raw) as LegacyStoredFeel
     const rawName = typeof parsed.deviceName === 'string' ? parsed.deviceName.trim() : ''
+
+    const legacySubMode = parsed.preferredPointerSubMode
+    const preferredPointerTab: PointerTabMode =
+      parsed.preferredPointerTab === 'trackpad' || parsed.preferredPointerTab === 'airmouse'
+        ? parsed.preferredPointerTab
+        : legacySubMode === 'relative' || legacySubMode === 'absolute'
+          ? 'airmouse'
+          : DEFAULT_LOCAL_FEEL.preferredPointerTab
+
+    const airMouseFeel: AirMouseFeelMode =
+      parsed.airMouseFeel === 'relative' || parsed.airMouseFeel === 'laser'
+        ? parsed.airMouseFeel
+        : legacySubMode === 'absolute'
+          ? 'laser'
+          : DEFAULT_LOCAL_FEEL.airMouseFeel
+
     const prefs: LocalFeelPreferences = {
       deviceName: rawName.length > 0 ? rawName.slice(0, 48) : defaultName,
+      themeMode:
+        parsed.themeMode === 'light' || parsed.themeMode === 'dark' || parsed.themeMode === 'system'
+          ? parsed.themeMode
+          : DEFAULT_LOCAL_FEEL.themeMode,
       gyroSensitivity:
         typeof parsed.gyroSensitivity === 'number' && Number.isFinite(parsed.gyroSensitivity)
           ? Math.min(5.0, Math.max(0.2, parsed.gyroSensitivity))
           : DEFAULT_LOCAL_FEEL.gyroSensitivity,
-      preferredPointerSubMode:
-        parsed.preferredPointerSubMode === 'relative' ||
-        parsed.preferredPointerSubMode === 'absolute' ||
-        parsed.preferredPointerSubMode === 'trackpad'
-          ? parsed.preferredPointerSubMode
-          : DEFAULT_LOCAL_FEEL.preferredPointerSubMode,
+      preferredPointerTab,
+      airMouseFeel,
       hapticsEnabled:
         typeof parsed.hapticsEnabled === 'boolean'
           ? parsed.hapticsEnabled
@@ -146,6 +179,54 @@ export function loadLocalFeelPreferences(): LocalFeelPreferences {
     return prefs
   } catch {
     return { ...DEFAULT_LOCAL_FEEL }
+  }
+}
+
+export function querySystemDarkMode(): boolean {
+  if (typeof window === 'undefined') return true
+  if (typeof window.AxonkeyNative?.isSystemDarkMode === 'function') {
+    try {
+      return Boolean(window.AxonkeyNative.isSystemDarkMode())
+    } catch {
+      // Fall through to matchMedia
+    }
+  }
+  if (typeof window.matchMedia === 'function') {
+    try {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches
+    } catch {
+      return true
+    }
+  }
+  return true
+}
+
+export function resolveEffectiveTheme(
+  mode: ThemeMode,
+  systemIsDark = querySystemDarkMode(),
+): EffectiveTheme {
+  if (mode === 'light') return 'light'
+  if (mode === 'dark') return 'dark'
+  return systemIsDark ? 'dark' : 'light'
+}
+
+export function applyEffectiveThemeToDocument(theme: EffectiveTheme): void {
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.theme = theme
+    const metaTheme = document.querySelector('meta[name="theme-color"]')
+    if (metaTheme) {
+      metaTheme.setAttribute('content', theme === 'dark' ? '#0d1017' : '#f4f6fb')
+    }
+  }
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.AxonkeyNative?.setSystemBarTheme === 'function'
+  ) {
+    try {
+      window.AxonkeyNative.setSystemBarTheme(theme === 'dark')
+    } catch {
+      // Ignore bridge errors in restricted test mocks
+    }
   }
 }
 
@@ -264,6 +345,18 @@ export function recenterNativeGyro(): void {
   } else {
     triggerHaptic('recenter')
   }
+}
+
+/**
+ * Calibrates gyroscope posture AND immediately sends AKP1 (0.5, 0.5) so the desktop cursor
+ * snaps dead-center on the primary monitor across both Touchpad and Air-Mouse modes.
+ */
+export function recenterNativeCursor(): boolean {
+  if (typeof window !== 'undefined' && typeof window.AxonkeyNative?.recenterCursor === 'function') {
+    return window.AxonkeyNative.recenterCursor()
+  }
+  recenterNativeGyro()
+  return false
 }
 
 export function startNativeVoiceStream(requestId: string): number {

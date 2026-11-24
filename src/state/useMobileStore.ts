@@ -27,11 +27,14 @@ import {
 } from '../input/bentoLayout'
 import { DEFAULT_DEMO_DECK } from '../transport/defaultDeck'
 import {
+  applyEffectiveThemeToDocument,
   discoverNativeLanHosts,
   loadLocalFeelPreferences,
   loadSavedHosts,
   parseDiscoveredLanHosts,
+  querySystemDarkMode,
   removeHostProfile,
+  resolveEffectiveTheme,
   saveHostProfile,
   saveLocalFeelPreferences,
   setHapticsEnabled,
@@ -40,8 +43,12 @@ import {
   setNativeGyroConfig,
   triggerHaptic,
   updateSavedHostAddrs,
+  type AirMouseFeelMode,
+  type EffectiveTheme,
   type LocalFeelPreferences,
+  type PointerTabMode,
   type SavedHostProfile,
+  type ThemeMode,
 } from '../transport/nativeBridge'
 import {
   DemoLoopbackTransport,
@@ -50,7 +57,7 @@ import {
 } from '../transport/sessionClient'
 
 export type WorkspaceMode = 'remote' | 'deck' | 'pointer'
-export type PointerSubMode = 'trackpad' | 'relative' | 'absolute'
+export type { AirMouseFeelMode, EffectiveTheme, PointerTabMode, ThemeMode }
 
 export interface TileFeedback {
   status: 'ok' | 'error'
@@ -90,7 +97,9 @@ interface MobileStoreState {
   discoveringLan: boolean
 
   workspaceMode: WorkspaceMode
-  pointerSubMode: PointerSubMode
+  pointerTab: PointerTabMode
+  airMouseFeel: AirMouseFeelMode
+  effectiveTheme: EffectiveTheme
   localFeel: LocalFeelPreferences
   pairingOpen: boolean
   feelSheetOpen: boolean
@@ -117,7 +126,9 @@ interface MobileStoreState {
   disconnect: () => void
 
   setWorkspaceMode: (mode: WorkspaceMode) => void
-  setPointerSubMode: (subMode: PointerSubMode) => void
+  setPointerTab: (tab: PointerTabMode) => void
+  setAirMouseFeel: (feel: AirMouseFeelMode) => void
+  setThemeMode: (mode: ThemeMode) => void
   setActivePage: (pageId: string) => void
   setPairingOpen: (open: boolean) => void
   setFeelSheetOpen: (open: boolean) => void
@@ -170,7 +181,9 @@ function buildNativeTransportFactory() {
 
 export const useMobileStore = create<MobileStoreState>((set, get) => {
   const initialFeel = loadLocalFeelPreferences()
+  const initialEffectiveTheme = resolveEffectiveTheme(initialFeel.themeMode)
   setHapticsEnabled(initialFeel.hapticsEnabled)
+  applyEffectiveThemeToDocument(initialEffectiveTheme)
 
   const ensureClient = (): MobileSessionClient => {
     if (singletonClient) return singletonClient
@@ -272,7 +285,9 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     discoveringLan: false,
 
     workspaceMode: 'remote',
-    pointerSubMode: initialFeel.preferredPointerSubMode,
+    pointerTab: initialFeel.preferredPointerTab,
+    airMouseFeel: initialFeel.airMouseFeel,
+    effectiveTheme: initialEffectiveTheme,
     localFeel: initialFeel,
     pairingOpen: false,
     feelSheetOpen: false,
@@ -292,15 +307,48 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     init: () => {
       const feel = loadLocalFeelPreferences()
       const hosts = loadSavedHosts()
+      const resolvedTheme = resolveEffectiveTheme(feel.themeMode)
+      applyEffectiveThemeToDocument(resolvedTheme)
       set({
         savedHosts: hosts,
         localFeel: feel,
-        pointerSubMode: feel.preferredPointerSubMode,
+        pointerTab: feel.preferredPointerTab,
+        airMouseFeel: feel.airMouseFeel,
+        effectiveTheme: resolvedTheme,
       })
       const client = ensureClient()
 
       if (typeof window !== 'undefined' && !listenersBound) {
         listenersBound = true
+
+        const refreshSystemTheme = (overrideSystemDark?: boolean) => {
+          const curMode = get().localFeel.themeMode
+          if (curMode !== 'system') return
+          const nextEffective = resolveEffectiveTheme(
+            'system',
+            overrideSystemDark ?? querySystemDarkMode(),
+          )
+          applyEffectiveThemeToDocument(nextEffective)
+          if (get().effectiveTheme !== nextEffective) {
+            set({ effectiveTheme: nextEffective })
+          }
+        }
+
+        if (typeof window.matchMedia === 'function') {
+          try {
+            const mql = window.matchMedia('(prefers-color-scheme: dark)')
+            const onMediaChange = (e: MediaQueryListEvent) => refreshSystemTheme(e.matches)
+            if (typeof mql.addEventListener === 'function') {
+              mql.addEventListener('change', onMediaChange)
+            }
+          } catch {
+            // Ignore in restricted environments
+          }
+        }
+
+        window.__axonkeyNativeOnSystemDarkChanged = (isDark) => {
+          refreshSystemTheme(Boolean(isDark))
+        }
 
         const handlePause = () => {
           setNativeGyroClutch(false)
@@ -310,6 +358,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
         }
 
         const handleResume = () => {
+          refreshSystemTheme()
           client.handleVisibilityVisible()
           const s = get()
           if (!s.isDemoMode && s.savedHosts.length > 0 && s.phase !== 'active') {
@@ -519,13 +568,26 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       set({ workspaceMode: mode, gyroGuard: null })
     },
 
-    setPointerSubMode: (subMode) => {
+    setPointerTab: (tab) => {
       const nextFeel: LocalFeelPreferences = {
         ...get().localFeel,
-        preferredPointerSubMode: subMode,
+        preferredPointerTab: tab,
       }
       saveLocalFeelPreferences(nextFeel)
-      set({ pointerSubMode: subMode, localFeel: nextFeel, gyroGuard: null })
+      set({ pointerTab: tab, localFeel: nextFeel, gyroGuard: null })
+    },
+
+    setAirMouseFeel: (feel) => {
+      const nextFeel: LocalFeelPreferences = {
+        ...get().localFeel,
+        airMouseFeel: feel,
+      }
+      saveLocalFeelPreferences(nextFeel)
+      set({ airMouseFeel: feel, localFeel: nextFeel, gyroGuard: null })
+    },
+
+    setThemeMode: (mode) => {
+      get().updateLocalFeel({ themeMode: mode })
     },
 
     setActivePage: (pageId) => {
@@ -612,13 +674,17 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
         }
         ensureClient().setDeviceName(merged.deviceName)
       }
+      const nextEffectiveTheme = resolveEffectiveTheme(merged.themeMode)
+      if (patch.themeMode !== undefined || get().effectiveTheme !== nextEffectiveTheme) {
+        applyEffectiveThemeToDocument(nextEffectiveTheme)
+      }
       saveLocalFeelPreferences(merged)
       setKeepScreenOn(get().phase === 'active' && merged.keepScreenOn)
       set({
         localFeel: merged,
-        ...(patch.preferredPointerSubMode
-          ? { pointerSubMode: patch.preferredPointerSubMode }
-          : {}),
+        effectiveTheme: nextEffectiveTheme,
+        ...(patch.preferredPointerTab ? { pointerTab: patch.preferredPointerTab } : {}),
+        ...(patch.airMouseFeel ? { airMouseFeel: patch.airMouseFeel } : {}),
       })
     },
 
