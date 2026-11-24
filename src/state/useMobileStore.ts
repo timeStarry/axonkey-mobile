@@ -46,6 +46,7 @@ import {
   setNativeGyroConfig,
   setNativeScreenOrientationMode,
   setNativeVolumeKeyMouseConfig,
+  setSoundEnabled,
   triggerHaptic,
   updateSavedHostAddrs,
   type AirMouseFeelMode,
@@ -90,6 +91,11 @@ export interface GyroGuardNotice {
   at: number
 }
 
+export interface HudToastNotice {
+  id: number
+  message: string
+}
+
 export interface EditingTileTarget {
   pageId: string
   zoneId: string
@@ -124,6 +130,8 @@ interface MobileStoreState {
   localFeel: LocalFeelPreferences
   pairingOpen: boolean
   feelSheetOpen: boolean
+  pointerSettingsOpen: boolean
+  pointerHelpOpen: boolean
   aboutSheetOpen: boolean
   embeddedAirMouseActive: boolean
 
@@ -134,6 +142,7 @@ interface MobileStoreState {
 
   voiceLevel: number
   gyroGuard: GyroGuardNotice | null
+  hudToast: HudToastNotice | null
 
   conflictBanner: string | null
   errorToast: string | null
@@ -156,7 +165,10 @@ interface MobileStoreState {
   setActivePage: (pageId: string) => void
   setPairingOpen: (open: boolean) => void
   setFeelSheetOpen: (open: boolean) => void
+  setPointerSettingsOpen: (open: boolean) => void
+  setPointerHelpOpen: (open: boolean) => void
   setAboutSheetOpen: (open: boolean) => void
+  showHudToast: (message: string) => void
   setEmbeddedAirMouseZoneActive: (zoneId: string, active: boolean) => void
   setLayoutEditing: (editing: boolean) => void
   setSelectedEditItem: (item: SelectedEditItem) => void
@@ -205,6 +217,8 @@ let singletonClient: MobileSessionClient | null = null
 let listenersBound = false
 let discoveryResetTimer: ReturnType<typeof setTimeout> | null = null
 let gyroGuardTimer: ReturnType<typeof setTimeout> | null = null
+let hudToastTimer: ReturnType<typeof setTimeout> | null = null
+let hudToastSeq = 1
 let volPressSeq = 1
 let appPausedRuntime = false
 let textInputFocusedRuntime = false
@@ -218,6 +232,8 @@ function computeShouldCaptureVolumeKeys(state: MobileStoreState): boolean {
   const anySheetOpen =
     state.pairingOpen ||
     state.feelSheetOpen ||
+    state.pointerSettingsOpen ||
+    state.pointerHelpOpen ||
     state.pageManagerOpen ||
     Boolean(state.editingTileTarget) ||
     state.aboutSheetOpen
@@ -253,6 +269,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
   const initialFeel = loadLocalFeelPreferences()
   const initialEffectiveTheme = resolveEffectiveTheme(initialFeel.themeMode)
   setHapticsEnabled(initialFeel.hapticsEnabled)
+  setSoundEnabled(initialFeel.soundEnabled)
   applyEffectiveThemeToDocument(initialEffectiveTheme)
 
   const ensureClient = (): MobileSessionClient => {
@@ -361,6 +378,8 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     localFeel: initialFeel,
     pairingOpen: false,
     feelSheetOpen: false,
+    pointerSettingsOpen: false,
+    pointerHelpOpen: false,
     aboutSheetOpen: false,
     embeddedAirMouseActive: false,
 
@@ -371,6 +390,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
     voiceLevel: 0,
     gyroGuard: null,
+    hudToast: null,
 
     conflictBanner: null,
     errorToast: null,
@@ -758,7 +778,24 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
     setFeelSheetOpen: (open) => set({ feelSheetOpen: open }),
 
+    setPointerSettingsOpen: (open) => set({ pointerSettingsOpen: open }),
+
+    setPointerHelpOpen: (open) => set({ pointerHelpOpen: open }),
+
     setAboutSheetOpen: (open) => set({ aboutSheetOpen: open }),
+
+    showHudToast: (message) => {
+      if (hudToastTimer) clearTimeout(hudToastTimer)
+      hudToastSeq += 1
+      const id = hudToastSeq
+      set({ hudToast: { id, message } })
+      hudToastTimer = setTimeout(() => {
+        if (get().hudToast?.id === id) {
+          set({ hudToast: null })
+        }
+        hudToastTimer = null
+      }, 1450)
+    },
 
     setEmbeddedAirMouseZoneActive: (zoneId, active) => {
       if (active) activeEmbeddedAirMouseZoneIds.add(zoneId)

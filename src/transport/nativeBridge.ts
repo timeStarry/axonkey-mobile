@@ -61,6 +61,7 @@ export interface SavedHostProfile {
 
 export type HapticKind =
   | 'tap'
+  | 'detent'
   | 'confirm'
   | 'error'
   | 'heavy'
@@ -84,12 +85,14 @@ export interface LocalFeelPreferences {
   screenOrientation: ScreenOrientationMode
   threeFingerSystemGestures: boolean
   hapticsEnabled: boolean
+  soundEnabled: boolean
   keepScreenOn: boolean
   preferredDockMode: 'voice' | 'text'
 }
 
 export interface AxonkeyAndroidBridge {
   haptic(kind: string): void
+  playClickSound?(kind: string): void
   getDefaultDeviceName?(): string
   isSystemDarkMode?(): boolean
   setSystemBarTheme?(isDark: boolean): void
@@ -187,14 +190,26 @@ export const DEFAULT_LOCAL_FEEL: LocalFeelPreferences = {
   screenOrientation: 'portrait',
   threeFingerSystemGestures: true,
   hapticsEnabled: true,
+  soundEnabled: true,
   keepScreenOn: true,
   preferredDockMode: 'voice',
 }
 
 let hapticsEnabledRuntime = true
+let soundEnabledRuntime = true
+let voiceRecordingRuntime = false
+let webAudioCtx: AudioContext | null = null
 
 export function setHapticsEnabled(enabled: boolean): void {
   hapticsEnabledRuntime = enabled
+}
+
+export function setSoundEnabled(enabled: boolean): void {
+  soundEnabledRuntime = enabled
+}
+
+export function setVoiceRecordingActive(active: boolean): void {
+  voiceRecordingRuntime = active
 }
 
 interface LegacyStoredFeel extends Partial<LocalFeelPreferences> {
@@ -262,6 +277,10 @@ export function loadLocalFeelPreferences(): LocalFeelPreferences {
         typeof parsed.hapticsEnabled === 'boolean'
           ? parsed.hapticsEnabled
           : DEFAULT_LOCAL_FEEL.hapticsEnabled,
+      soundEnabled:
+        typeof parsed.soundEnabled === 'boolean'
+          ? parsed.soundEnabled
+          : DEFAULT_LOCAL_FEEL.soundEnabled,
       keepScreenOn:
         typeof parsed.keepScreenOn === 'boolean'
           ? parsed.keepScreenOn
@@ -272,6 +291,7 @@ export function loadLocalFeelPreferences(): LocalFeelPreferences {
           : DEFAULT_LOCAL_FEEL.preferredDockMode,
     }
     hapticsEnabledRuntime = prefs.hapticsEnabled
+    soundEnabledRuntime = prefs.soundEnabled
     return prefs
   } catch {
     return { ...DEFAULT_LOCAL_FEEL }
@@ -341,6 +361,7 @@ export function setNativeBackIntercept(enabled: boolean): void {
 
 export function saveLocalFeelPreferences(prefs: LocalFeelPreferences): void {
   hapticsEnabledRuntime = prefs.hapticsEnabled
+  soundEnabledRuntime = prefs.soundEnabled
   if (typeof window === 'undefined') return
   try {
     window.localStorage.setItem(LOCAL_FEEL_STORAGE_KEY, JSON.stringify(prefs))
@@ -371,25 +392,86 @@ export function hasNativeVoiceStream(): boolean {
   )
 }
 
+function playWebClickFallback(kind: HapticKind): void {
+  if (typeof window === 'undefined') return
+  const AudioCtx =
+    window.AudioContext ??
+    (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!AudioCtx) return
+  try {
+    if (!webAudioCtx) {
+      webAudioCtx = new AudioCtx()
+    }
+    if (webAudioCtx.state === 'suspended') {
+      void webAudioCtx.resume()
+    }
+    const now = webAudioCtx.currentTime
+    const osc = webAudioCtx.createOscillator()
+    const gain = webAudioCtx.createGain()
+
+    const isDetent = kind === 'detent'
+    const isHeavy = kind === 'heavy'
+    const isConfirm = kind === 'confirm' || kind === 'recenter'
+
+    osc.type = 'triangle'
+    const startFreq = isHeavy ? 1050 : isDetent ? 2500 : isConfirm ? 1850 : 1950
+    const endFreq = isHeavy ? 420 : isDetent ? 1100 : 780
+    const dur = isDetent ? 0.005 : isConfirm ? 0.011 : isHeavy ? 0.009 : 0.0065
+    const peakGain = isDetent ? 0.045 : isHeavy ? 0.08 : 0.065
+
+    osc.frequency.setValueAtTime(startFreq, now)
+    osc.frequency.exponentialRampToValueAtTime(endFreq, now + dur)
+    gain.gain.setValueAtTime(peakGain, now)
+    gain.gain.exponentialRampToValueAtTime(0.0008, now + dur)
+
+    osc.connect(gain)
+    gain.connect(webAudioCtx.destination)
+    osc.start(now)
+    osc.stop(now + dur + 0.001)
+  } catch {
+    // Ignore WebAudio restrictions in headless / test environments
+  }
+}
+
+export function triggerClickSound(kind: HapticKind = 'tap'): void {
+  if (!soundEnabledRuntime || voiceRecordingRuntime || typeof window === 'undefined') return
+  if (kind === 'voiceStart' || kind === 'voiceStop' || kind === 'error') return
+  if (typeof window.AxonkeyNative?.playClickSound === 'function') {
+    try {
+      window.AxonkeyNative.playClickSound(kind)
+    } catch {
+      // Ignore partial native mock errors
+    }
+    return
+  }
+  if (!window.AxonkeyNative) {
+    playWebClickFallback(kind)
+  }
+}
+
 export function triggerHaptic(kind: HapticKind = 'tap'): void {
-  if (!hapticsEnabledRuntime || typeof window === 'undefined') return
+  if (typeof window === 'undefined') return
+  triggerClickSound(kind)
+  if (!hapticsEnabledRuntime) return
   if (window.AxonkeyNative) {
     window.AxonkeyNative.haptic(kind)
     return
   }
   if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
     const pattern =
-      kind === 'tap' || kind === 'voiceStop'
-        ? 8
-        : kind === 'voiceStart'
-          ? 15
-          : kind === 'confirm'
-            ? [10, 30, 12]
-            : kind === 'recenter'
-              ? [12, 24, 12]
-              : kind === 'heavy'
-                ? 20
-                : [25, 40, 25]
+      kind === 'detent'
+        ? 5
+        : kind === 'tap' || kind === 'voiceStop'
+          ? 8
+          : kind === 'voiceStart'
+            ? 15
+            : kind === 'confirm'
+              ? [10, 30, 12]
+              : kind === 'recenter'
+                ? [12, 24, 12]
+                : kind === 'heavy'
+                  ? 20
+                  : [25, 40, 25]
     navigator.vibrate(pattern)
   }
 }

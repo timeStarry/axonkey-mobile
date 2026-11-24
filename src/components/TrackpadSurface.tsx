@@ -3,11 +3,12 @@ import {
   AlertTriangle,
   ArrowLeftRight,
   Crosshair,
+  Info,
   Lock,
   LockOpen,
   Pause,
   Play,
-  Volume2,
+  SlidersHorizontal,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { TrackpadController } from '../input/trackpad'
@@ -49,11 +50,13 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
   const effectiveTheme = useMobileStore((s) => s.effectiveTheme)
   const gyroSensitivity = useMobileStore((s) => s.localFeel.gyroSensitivity)
   const airMouseHandedness = useMobileStore((s) => s.localFeel.airMouseHandedness)
-  const volumeKeyMouseMode = useMobileStore((s) => s.localFeel.volumeKeyMouseMode)
   const threeFingerSystemGestures = useMobileStore(
     (s) => s.localFeel.threeFingerSystemGestures,
   )
   const updateLocalFeel = useMobileStore((s) => s.updateLocalFeel)
+  const setPointerSettingsOpen = useMobileStore((s) => s.setPointerSettingsOpen)
+  const setPointerHelpOpen = useMobileStore((s) => s.setPointerHelpOpen)
+  const showHudToast = useMobileStore((s) => s.showHudToast)
   const gyroGuard = useMobileStore((s) => s.gyroGuard)
   const clearGyroGuard = useMobileStore((s) => s.clearGyroGuard)
 
@@ -173,13 +176,24 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
     setClutchHeld(false)
     setLaserPaused(false)
     setAirMouseFeel(nextFeel)
+    showHudToast(
+      nextFeel === 'relative'
+        ? '惯性飞鼠 · 按住下方区域挥腕移鼠'
+        : '激光飞鼠 · 手机实时指向屏幕',
+    )
   }
 
   const handleToggleHandedness = () => {
     triggerHaptic('tap')
+    const nextHand = airMouseHandedness === 'right' ? 'left' : 'right'
     updateLocalFeel({
-      airMouseHandedness: airMouseHandedness === 'right' ? 'left' : 'right',
+      airMouseHandedness: nextHand,
     })
+    showHudToast(
+      nextHand === 'left'
+        ? '已切换为左手握持 · 滚轮移至左侧'
+        : '已切换为右手握持 · 滚轮移至右侧',
+    )
   }
 
   const toggleDragLock = () => {
@@ -187,6 +201,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
     setDragLocked(next)
     controllerRef.current?.setButton('left', next)
     triggerHaptic(next ? 'heavy' : 'tap')
+    showHudToast(next ? '左键拖拽已锁定 · 滑动即可移窗' : '左键拖拽已解除')
   }
 
   const handlePhysicalButton = (button: PointerButtonName, down: boolean) => {
@@ -235,7 +250,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
     if (Math.abs(st.notchAccumPx) >= ENCODER_NOTCH_PX) {
       const steps = Math.trunc(st.notchAccumPx / ENCODER_NOTCH_PX)
       st.notchAccumPx -= steps * ENCODER_NOTCH_PX
-      triggerHaptic('tap')
+      triggerHaptic('detent')
       setRailOffsetTick((n) => (n + steps) % 4)
     }
 
@@ -284,6 +299,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
       }
     }
     recenterNativeCursor()
+    showHudToast('光标已归中至主屏中央')
     setRecenteredFlash(true)
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
     flashTimerRef.current = setTimeout(() => {
@@ -361,15 +377,6 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
               >
                 <ArrowLeftRight className="w-3.5 h-3.5" />
               </button>
-
-              {volumeKeyMouseMode !== 'off' && (
-                <span
-                  aria-label="音量键鼠标已开启"
-                  className="ak-pill ak-text-2 h-8 px-2 rounded-[14px] border inline-flex items-center justify-center"
-                >
-                  <Volume2 className="w-3.5 h-3.5" />
-                </span>
-              )}
             </>
           ) : (
             <button
@@ -396,6 +403,30 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
           >
             <Crosshair className="w-3.5 h-3.5" />
             <span>{recenteredFlash ? '已归中' : '归中'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic('tap')
+              setPointerHelpOpen(true)
+            }}
+            aria-label="操控手势说明"
+            className="tile-surface ak-elevated ak-text-2 h-8 w-8 rounded-[14px] border inline-flex items-center justify-center"
+          >
+            <Info className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic('tap')
+              setPointerSettingsOpen(true)
+            }}
+            aria-label="指针与飞鼠设置"
+            className="tile-surface ak-elevated ak-text-2 h-8 w-8 rounded-[14px] border inline-flex items-center justify-center"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -585,7 +616,9 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
                   type="button"
                   onClick={() => {
                     triggerHaptic('tap')
-                    setLaserPaused((p) => !p)
+                    const nextPaused = !laserPaused
+                    setLaserPaused(nextPaused)
+                    showHudToast(nextPaused ? '激光追踪已暂停' : '激光追踪已恢复')
                   }}
                   aria-label={laserPaused ? '恢复追踪' : '暂停追踪'}
                   className="ak-elevated ak-text-2 absolute top-3 right-3 w-8 h-8 rounded-full border inline-flex items-center justify-center"

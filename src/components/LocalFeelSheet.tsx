@@ -4,11 +4,8 @@ import { clsx } from 'clsx'
 import { BottomSheet } from './BottomSheet'
 import {
   useMobileStore,
-  type AirMouseFeelMode,
-  type PointerTabMode,
   type ScreenOrientationMode,
   type ThemeMode,
-  type VolumeKeyMouseMode,
 } from '../state/useMobileStore'
 import {
   getDefaultPhoneName,
@@ -19,13 +16,12 @@ import {
 export function LocalFeelSheet() {
   const open = useMobileStore((s) => s.feelSheetOpen)
   const setOpen = useMobileStore((s) => s.setFeelSheetOpen)
+  const setPointerSettingsOpen = useMobileStore((s) => s.setPointerSettingsOpen)
   const setAboutSheetOpen = useMobileStore((s) => s.setAboutSheetOpen)
-  const deck = useMobileStore((s) => s.deck)
   const localFeel = useMobileStore((s) => s.localFeel)
   const effectiveTheme = useMobileStore((s) => s.effectiveTheme)
   const updateLocalFeel = useMobileStore((s) => s.updateLocalFeel)
   const setThemeMode = useMobileStore((s) => s.setThemeMode)
-  const updateSensitivity = useMobileStore((s) => s.updateSensitivity)
 
   const isLight = effectiveTheme === 'light'
   const versionInfo = getNativeAppVersionInfo()
@@ -60,23 +56,6 @@ export function LocalFeelSheet() {
     { id: 'system', label: '自动旋转' },
   ]
 
-  const volumeKeyOptions: { id: VolumeKeyMouseMode; label: string }[] = [
-    { id: 'off', label: '关闭' },
-    { id: 'lr', label: '左 / 右键' },
-    { id: 'rl', label: '右 / 左键' },
-    { id: 'scroll', label: '滚轮' },
-  ]
-
-  const pointerTabOptions: { id: PointerTabMode; label: string }[] = [
-    { id: 'trackpad', label: '触控板' },
-    { id: 'airmouse', label: '飞鼠' },
-  ]
-
-  const airMouseFeelOptions: { id: AirMouseFeelMode; label: string }[] = [
-    { id: 'relative', label: '惯性' },
-    { id: 'laser', label: '激光' },
-  ]
-
   const switchTrack = (checked: boolean) =>
     clsx(
       'w-10 h-6 rounded-full p-0.5 transition-colors inline-flex items-center shrink-0',
@@ -93,7 +72,7 @@ export function LocalFeelSheet() {
     <BottomSheet
       open={open}
       onClose={() => setOpen(false)}
-      title="偏好设置"
+      title="全局设置"
       closeAriaLabel="关闭"
       testId="feel-sheet-backdrop"
     >
@@ -188,158 +167,8 @@ export function LocalFeelSheet() {
         </div>
       </div>
 
-      {/* Sensitivity Sliders */}
-      <div className="ak-well p-3 rounded-[18px] border space-y-3">
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-xs">
-            <span className="ak-text-2">指针速度</span>
-            <span className="ak-text-1 font-mono">{deck.pointerSensitivity.toFixed(1)}×</span>
-          </div>
-          <input
-            type="range"
-            min={0.4}
-            max={3.0}
-            step={0.1}
-            value={deck.pointerSensitivity}
-            onChange={(e) =>
-              updateSensitivity({ pointerSensitivity: Number.parseFloat(e.target.value) })
-            }
-            className="ak-slider w-full"
-          />
-        </div>
-
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-xs">
-            <span className="ak-text-2">滚轮速度</span>
-            <span className="ak-text-1 font-mono">{deck.scrollSensitivity.toFixed(1)}×</span>
-          </div>
-          <input
-            type="range"
-            min={0.4}
-            max={3.0}
-            step={0.1}
-            value={deck.scrollSensitivity}
-            onChange={(e) =>
-              updateSensitivity({ scrollSensitivity: Number.parseFloat(e.target.value) })
-            }
-            className="ak-slider w-full"
-          />
-        </div>
-
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-xs">
-            <span className="ak-text-2">飞鼠速度</span>
-            <span className="ak-text-1 font-mono">{localFeel.gyroSensitivity.toFixed(1)}×</span>
-          </div>
-          <input
-            type="range"
-            min={0.4}
-            max={3.0}
-            step={0.1}
-            value={localFeel.gyroSensitivity}
-            onChange={(e) =>
-              updateLocalFeel({ gyroSensitivity: Number.parseFloat(e.target.value) })
-            }
-            className="ak-slider w-full"
-          />
-        </div>
-      </div>
-
-      {/* Air-Mouse Volume Keys */}
-      <div className="space-y-1.5">
-        <span className="ak-text-2 text-xs font-medium block">飞鼠音量键</span>
-        <div
-          role="group"
-          aria-label="飞鼠实体音量键模式"
-          className="ak-seg grid grid-cols-4 gap-1 p-0.5 rounded-[14px] border"
-        >
-          {volumeKeyOptions.map((opt) => {
-            const active = localFeel.volumeKeyMouseMode === opt.id
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => {
-                  triggerHaptic('tap')
-                  updateLocalFeel({ volumeKeyMouseMode: opt.id })
-                }}
-                className={clsx(
-                  'h-7 rounded-[11px] text-xs font-medium transition-colors',
-                  active ? 'ak-elevated-alt border' : 'ak-text-2',
-                )}
-              >
-                {opt.label}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Default Pointer & Air-Mouse Mode */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="ak-seg grid grid-cols-2 gap-1 p-0.5 rounded-[14px] border">
-          {pointerTabOptions.map((opt) => {
-            const active = localFeel.preferredPointerTab === opt.id
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => {
-                  triggerHaptic('tap')
-                  updateLocalFeel({ preferredPointerTab: opt.id })
-                }}
-                className={clsx(
-                  'h-7 rounded-[11px] text-xs font-medium transition-colors',
-                  active ? 'ak-elevated-alt border' : 'ak-text-2',
-                )}
-              >
-                {opt.label}
-              </button>
-            )
-          })}
-        </div>
-
-        <div className="ak-seg grid grid-cols-2 gap-1 p-0.5 rounded-[14px] border">
-          {airMouseFeelOptions.map((opt) => {
-            const active = localFeel.airMouseFeel === opt.id
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => {
-                  triggerHaptic('tap')
-                  updateLocalFeel({ airMouseFeel: opt.id })
-                }}
-                className={clsx(
-                  'h-7 rounded-[11px] text-xs font-medium transition-colors',
-                  active ? 'ak-elevated-alt border' : 'ak-text-2',
-                )}
-              >
-                {opt.label}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Crisp Single-Line Switches */}
+      {/* Global Tactile, Sound & Screen Switches */}
       <div className="ak-well rounded-[18px] border divide-y divide-black/[0.04] dark:divide-white/[0.05]">
-        <button
-          type="button"
-          onClick={() => {
-            triggerHaptic('tap')
-            updateLocalFeel({
-              threeFingerSystemGestures: !localFeel.threeFingerSystemGestures,
-            })
-          }}
-          className="w-full h-11 px-3.5 flex items-center justify-between text-xs"
-        >
-          <span className="ak-text-1 font-medium">三指系统手势</span>
-          <span className={switchTrack(localFeel.threeFingerSystemGestures)}>
-            <span className="w-5 h-5 rounded-full bg-white shadow-xs" />
-          </span>
-        </button>
-
         <button
           type="button"
           onClick={() => {
@@ -351,6 +180,21 @@ export function LocalFeelSheet() {
         >
           <span className="ak-text-1 font-medium">触觉振动</span>
           <span className={switchTrack(localFeel.hapticsEnabled)}>
+            <span className="w-5 h-5 rounded-full bg-white shadow-xs" />
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            const next = !localFeel.soundEnabled
+            updateLocalFeel({ soundEnabled: next })
+            if (next) triggerHaptic('confirm')
+          }}
+          className="w-full h-11 px-3.5 flex items-center justify-between text-xs"
+        >
+          <span className="ak-text-1 font-medium">按键提示音</span>
+          <span className={switchTrack(localFeel.soundEnabled)}>
             <span className="w-5 h-5 rounded-full bg-white shadow-xs" />
           </span>
         </button>
@@ -370,23 +214,42 @@ export function LocalFeelSheet() {
         </button>
       </div>
 
-      {/* Crisp Single-Line About & Update Row */}
-      <button
-        type="button"
-        onClick={() => {
-          triggerHaptic('tap')
-          setOpen(false)
-          setAboutSheetOpen(true)
-        }}
-        aria-label="关于与版本更新"
-        className="ak-well w-full h-11 px-3.5 rounded-[18px] border flex items-center justify-between text-xs"
-      >
-        <span className="ak-text-1 font-medium">版本更新</span>
-        <span className="ak-text-2 font-mono inline-flex items-center gap-1">
-          <span>v{versionInfo.versionName}</span>
-          <ChevronRight className="w-3.5 h-3.5 ak-text-3" />
-        </span>
-      </button>
+      {/* Sub-Navigation: Pointer Settings & About/Updates */}
+      <div className="ak-well rounded-[18px] border divide-y divide-black/[0.04] dark:divide-white/[0.05]">
+        <button
+          type="button"
+          onClick={() => {
+            triggerHaptic('tap')
+            setOpen(false)
+            setPointerSettingsOpen(true)
+          }}
+          aria-label="打开指针与飞鼠设置"
+          className="w-full h-11 px-3.5 flex items-center justify-between text-xs"
+        >
+          <span className="ak-text-1 font-medium">指针与飞鼠设置</span>
+          <span className="ak-text-2 inline-flex items-center gap-1">
+            <span>灵敏度 · 音量键</span>
+            <ChevronRight className="w-3.5 h-3.5 ak-text-3" />
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            triggerHaptic('tap')
+            setOpen(false)
+            setAboutSheetOpen(true)
+          }}
+          aria-label="关于与版本更新"
+          className="w-full h-11 px-3.5 flex items-center justify-between text-xs"
+        >
+          <span className="ak-text-1 font-medium">版本更新</span>
+          <span className="ak-text-2 font-mono inline-flex items-center gap-1">
+            <span>v{versionInfo.versionName}</span>
+            <ChevronRight className="w-3.5 h-3.5 ak-text-3" />
+          </span>
+        </button>
+      </div>
     </BottomSheet>
   )
 }

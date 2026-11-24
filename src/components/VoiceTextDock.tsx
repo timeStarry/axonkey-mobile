@@ -3,7 +3,7 @@ import { CornerDownLeft, Keyboard, Mic, Send } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { TextCommitMode } from '../protocol/types'
 import { useMobileStore } from '../state/useMobileStore'
-import { isNativeShell, triggerHaptic } from '../transport/nativeBridge'
+import { isNativeShell, setVoiceRecordingActive, triggerHaptic } from '../transport/nativeBridge'
 
 const WAVE_WEIGHTS = [0.35, 0.6, 0.88, 1.0, 0.88, 0.6, 0.35]
 const CANCEL_SLIDE_PX = 42
@@ -43,11 +43,18 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
     if (!connected && recordingRef.current) {
       recordingRef.current = false
       cancelingRef.current = false
+      setVoiceRecordingActive(false)
       setRecording(false)
       setCanceling(false)
       getClient().cancelVoiceStream('disconnected')
     }
   }, [connected, getClient])
+
+  useEffect(() => {
+    return () => {
+      setVoiceRecordingActive(false)
+    }
+  }, [])
 
   useEffect(() => {
     if (!recording || (!isDemoMode && isNativeShell())) return
@@ -82,6 +89,7 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
     startYRef.current = clientY
     cancelingRef.current = false
     recordingRef.current = true
+    setVoiceRecordingActive(true)
     setCanceling(false)
     setRecording(true)
     triggerHaptic('voiceStart')
@@ -102,6 +110,7 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
     const wasCanceling = forceCancel || cancelingRef.current
     recordingRef.current = false
     cancelingRef.current = false
+    setVoiceRecordingActive(false)
     setRecording(false)
     setCanceling(false)
 

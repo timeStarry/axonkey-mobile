@@ -78,6 +78,9 @@ class VoiceCaptureController(
     private val legacyCapturing = AtomicBoolean(false)
     private var legacyThread: Thread? = null
 
+    fun isCapturing(): Boolean =
+        synchronized(controllerLock) { activeSession != null } || legacyCapturing.get()
+
     @SuppressLint("MissingPermission")
     fun startVoiceStream(requestId: String): Double {
         if (!hasRecordPermission()) {

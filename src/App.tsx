@@ -18,6 +18,8 @@ import { LocalFeelSheet } from './components/LocalFeelSheet'
 import { PageManagerSheet } from './components/PageManagerSheet'
 import { PageZoneRenderer } from './components/PageZoneRenderer'
 import { PairingSheet } from './components/PairingSheet'
+import { PointerHelpSheet } from './components/PointerHelpSheet'
+import { PointerSettingsSheet } from './components/PointerSettingsSheet'
 import { TileStyleSheet } from './components/TileStyleSheet'
 import { TrackpadSurface } from './components/TrackpadSurface'
 import { VoiceTextDock } from './components/VoiceTextDock'
@@ -78,6 +80,7 @@ export function App() {
   const screenOrientation = useMobileStore((s) => s.localFeel.screenOrientation)
   const conflictBanner = useMobileStore((s) => s.conflictBanner)
   const errorToast = useMobileStore((s) => s.errorToast)
+  const hudToast = useMobileStore((s) => s.hudToast)
 
   const setWorkspaceMode = useMobileStore((s) => s.setWorkspaceMode)
   const setActivePage = useMobileStore((s) => s.setActivePage)
@@ -766,8 +769,22 @@ export function App() {
 
   const renderSheets = () => (
     <>
+      {hudToast && (
+        <div
+          key={hudToast.id}
+          role="status"
+          aria-live="polite"
+          data-testid="hud-toast"
+          className="pointer-events-none fixed top-14 left-1/2 -translate-x-1/2 z-40 max-w-[88vw] px-3.5 py-1.5 rounded-full border ak-elevated-alt text-xs font-medium shadow-lg backdrop-blur-md flex items-center gap-1.5 animate-[hudFadeIn_140ms_ease-out]"
+        >
+          <span className="w-1.5 h-1.5 rounded-full ak-live-dot shrink-0" />
+          <span className="truncate">{hudToast.message}</span>
+        </div>
+      )}
       <PairingSheet />
       <LocalFeelSheet />
+      <PointerSettingsSheet />
+      <PointerHelpSheet />
       <TileStyleSheet />
       <PageManagerSheet currentPage={editingCurrentPage} />
       <AboutUpdateSheet />
@@ -872,7 +889,7 @@ export function App() {
                       triggerHaptic('tap')
                       setFeelSheetOpen(true)
                     }}
-                    aria-label="本地手感设置"
+                    aria-label="全局设置"
                     className="ak-text-2 w-8 h-8 rounded-[12px] inline-flex items-center justify-center active:scale-95"
                   >
                     <SlidersHorizontal className="w-4 h-4" />
@@ -945,7 +962,7 @@ export function App() {
                 triggerHaptic('tap')
                 setFeelSheetOpen(true)
               }}
-              aria-label="本地手感设置"
+              aria-label="全局设置"
               className="ak-text-2 w-8 h-8 rounded-[12px] inline-flex items-center justify-center hover:opacity-90 active:scale-95 transition-transform"
             >
               <SlidersHorizontal className="w-4 h-4" />

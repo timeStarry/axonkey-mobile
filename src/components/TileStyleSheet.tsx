@@ -125,9 +125,9 @@ export function TileStyleSheet() {
         </div>
       </div>
 
-      {/* Subtle Signal Dot Indicator */}
+      {/* Icon Semantic Color */}
       <div className="space-y-1.5">
-        <span className="ak-text-2 text-xs font-medium block">指示微点</span>
+        <span className="ak-text-2 text-xs font-medium block">图标色彩</span>
         <div className="grid grid-cols-6 gap-1.5">
           {ACCENT_KEYS.map((acc) => {
             const st = getAccentStyle(acc, isLight)

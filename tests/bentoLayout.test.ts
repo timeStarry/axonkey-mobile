@@ -87,7 +87,7 @@ describe('bentoLayout — Plan B Circular Clickpad Ring, Corner Rescue & Dense P
     const classicRemote = DEFAULT_DEMO_DECK.pages[0]
     const remoteZones = normalizePageZones(classicRemote)
 
-    expect(remoteZones).toHaveLength(4)
+    expect(remoteZones).toHaveLength(3)
     expect(remoteZones[0]).toMatchObject({
       kind: 'bento-grid',
       columns: 3,
@@ -112,15 +112,33 @@ describe('bentoLayout — Plan B Circular Clickpad Ring, Corner Rescue & Dense P
       columns: 4,
       tileIds: ['remote.back', 'remote.mute', 'remote.vol_down', 'remote.vol_up'],
     })
-    expect(remoteZones[3]).toMatchObject({
-      kind: 'bento-grid',
-      columns: 2,
-      tileIds: ['remote.q1', 'remote.q2', 'remote.q3', 'remote.q4'],
-    })
 
-    // Zone-less legacy remote snapshot synthesizes identical Plan B structure
+    // Zone-less legacy remote snapshot with extra quick tiles synthesizes 3 core bands + 4th rescue band
     const legacyZoneLessRemote: MobileDeckPage = {
       ...classicRemote,
+      tiles: [
+        ...classicRemote.tiles,
+        {
+          id: 'remote.q1',
+          label: '快捷 1',
+          icon: 'play',
+          accent: 'slate',
+          colSpan: 1,
+          mode: 'gesture',
+          hasDoubleClick: false,
+          hasLongPress: false,
+        },
+        {
+          id: 'remote.q2',
+          label: '快捷 2',
+          icon: 'check',
+          accent: 'slate',
+          colSpan: 1,
+          mode: 'gesture',
+          hasDoubleClick: false,
+          hasLongPress: false,
+        },
+      ],
       zones: undefined,
     }
     const synthesized = normalizePageZones(legacyZoneLessRemote)

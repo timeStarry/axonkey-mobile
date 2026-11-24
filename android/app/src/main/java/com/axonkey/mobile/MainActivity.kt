@@ -58,6 +58,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var voiceController: VoiceCaptureController
     private lateinit var lanDiscoveryClient: LanDiscoveryClient
     private lateinit var appUpdateInstaller: AppUpdateInstaller
+    private lateinit var tactileSoundPlayer: TactileSoundPlayer
     private var displayManager: DisplayManager? = null
 
     private val volumeLock = Any()
@@ -154,6 +155,8 @@ class MainActivity : AppCompatActivity() {
                 emitJs("window.__axonkeyNativeOnHostsDiscovered && window.__axonkeyNativeOnHostsDiscovered($quoted);")
             }
         )
+
+        tactileSoundPlayer = TactileSoundPlayer(this)
 
         appUpdateInstaller = AppUpdateInstaller(
             context = this,
@@ -375,6 +378,9 @@ class MainActivity : AppCompatActivity() {
         if (::appUpdateInstaller.isInitialized) {
             appUpdateInstaller.shutdown()
         }
+        if (::tactileSoundPlayer.isInitialized) {
+            tactileSoundPlayer.release()
+        }
         arbiter.shutdown()
         super.onDestroy()
     }
@@ -416,7 +422,7 @@ class MainActivity : AppCompatActivity() {
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 when (kind) {
-                    "tap" -> {
+                    "tap", "detent" -> {
                         vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
                         return
                     }
@@ -474,6 +480,9 @@ class MainActivity : AppCompatActivity() {
 
         val comp = VibrationEffect.startComposition()
         return when (kind) {
+            "detent" -> if (canTick) {
+                comp.addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 0.42f).compose()
+            } else null
             "tap" -> if (canTick) {
                 comp.addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 0.65f).compose()
             } else null
@@ -537,6 +546,15 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun haptic(kind: String) {
             performHaptic(kind)
+        }
+
+        @JavascriptInterface
+        fun playClickSound(kind: String) {
+            if (!isActivityResumed) return
+            if (::voiceController.isInitialized && voiceController.isCapturing()) return
+            if (::tactileSoundPlayer.isInitialized) {
+                tactileSoundPlayer.play(kind)
+            }
         }
 
         @JavascriptInterface

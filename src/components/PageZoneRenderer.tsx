@@ -6,6 +6,7 @@ import {
   ChevronUp,
   Compass,
   Crosshair,
+  Info,
   Lock,
   LockOpen,
   MousePointer2,
@@ -68,6 +69,13 @@ function resolveTileHaptic(tile: MobileTile | undefined, gesture: TileGestureKin
   return 'tap'
 }
 
+function resolveTileSilkscreen(tile: MobileTile): string | null {
+  const raw = (tile.actionSummary || tile.subtitle || '').trim()
+  if (!raw) return null
+  if (raw.toLowerCase() === tile.label.trim().toLowerCase()) return null
+  return raw
+}
+
 let embeddedBtnSeq = 1
 function nextEmbeddedPressId(button: PointerButtonName): string {
   embeddedBtnSeq += 1
@@ -99,6 +107,8 @@ function EmbeddedPointerPad({
   const updateZone = useMobileStore((s) => s.updateZone)
   const setSelectedEditItem = useMobileStore((s) => s.setSelectedEditItem)
   const setEmbeddedAirMouseZoneActive = useMobileStore((s) => s.setEmbeddedAirMouseZoneActive)
+  const setPointerHelpOpen = useMobileStore((s) => s.setPointerHelpOpen)
+  const showHudToast = useMobileStore((s) => s.showHudToast)
 
   const mode: EmbeddedPointerMode = zone.pointerMode === 'relative' ? 'relative' : 'trackpad'
   const padHeight: EmbeddedPadHeight = zone.padHeight ?? 'standard'
@@ -199,6 +209,7 @@ function EmbeddedPointerPad({
 
   const handleRecenter = () => {
     recenterNativeCursor()
+    showHudToast('光标已归中至主屏中央')
     setRecenteredFlash(true)
     setTimeout(() => setRecenteredFlash(false), 700)
   }
@@ -303,7 +314,7 @@ function EmbeddedPointerPad({
             </button>
           </div>
 
-          {/* Top-right Recenter + Drag Lock Pills */}
+          {/* Top-right Recenter + Drag Lock + Help Pills */}
           <div
             onPointerDown={(e) => e.stopPropagation()}
             className="absolute top-2.5 right-2.5 inline-flex items-center gap-1"
@@ -328,6 +339,7 @@ function EmbeddedPointerPad({
                 setDragLocked(next)
                 controllerRef.current?.setButton('left', next)
                 triggerHaptic(next ? 'heavy' : 'tap')
+                showHudToast(next ? '左键拖拽已锁定 · 滑动即可移窗' : '左键拖拽已解除')
               }}
               aria-label="拖拽锁"
               className={clsx(
@@ -337,9 +349,20 @@ function EmbeddedPointerPad({
             >
               {dragLocked ? <Lock className="w-2.5 h-2.5" /> : <LockOpen className="w-2.5 h-2.5" />}
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic('tap')
+                setPointerHelpOpen(true)
+              }}
+              aria-label="操控手势说明"
+              className="ak-elevated ak-text-2 inline-flex items-center justify-center w-6 h-5 rounded-full border"
+            >
+              <Info className="w-2.5 h-2.5" />
+            </button>
           </div>
 
-          {/* Subtle 16px center crosshair reticle — zero tutorial text */}
           <div className="w-4 h-4 relative opacity-20 pointer-events-none">
             <span className="absolute inset-x-0 top-1/2 h-px bg-current" />
             <span className="absolute inset-y-0 left-1/2 w-px bg-current" />
@@ -364,18 +387,31 @@ function EmbeddedPointerPad({
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={handleRecenter}
-            aria-label="归中"
-            className={clsx(
-              'absolute top-2.5 right-2.5 z-10 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-medium border transition-colors',
-              recenteredFlash ? 'ak-primary-solid' : 'ak-elevated ak-text-2',
-            )}
-          >
-            <Crosshair className="w-2.5 h-2.5" />
-            <span>{recenteredFlash ? '已归中' : '归中'}</span>
-          </button>
+          <div className="absolute top-2.5 right-2.5 z-10 inline-flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleRecenter}
+              aria-label="归中"
+              className={clsx(
+                'inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-medium border transition-colors',
+                recenteredFlash ? 'ak-primary-solid' : 'ak-elevated ak-text-2',
+              )}
+            >
+              <Crosshair className="w-2.5 h-2.5" />
+              <span>{recenteredFlash ? '已归中' : '归中'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic('tap')
+                setPointerHelpOpen(true)
+              }}
+              aria-label="操控手势说明"
+              className="ak-elevated ak-text-2 inline-flex items-center justify-center w-6 h-5 rounded-full border"
+            >
+              <Info className="w-2.5 h-2.5" />
+            </button>
+          </div>
 
           <button
             type="button"
@@ -493,6 +529,62 @@ function EmbeddedPointerPad({
 const RING_SWIPE_INIT_PX = 26
 const RING_SWIPE_STEP_PX = 38
 
+/**
+ * Exact 90-degree annular quarter-ring sector paths in a 264x264 coordinate system
+ * (center 132,132; outer radius R=131; inner radius r=50; 45-deg diagonals).
+ */
+const CLICKPAD_SECTOR_PATHS: Record<
+  1 | 3 | 5 | 7,
+  { d: string; shiftX: number; shiftY: number; clip: string }
+> = {
+  1: {
+    d: 'M 39.37 39.37 A 131 131 0 0 1 224.63 39.37 L 167.36 96.64 A 50 50 0 0 0 96.64 96.64 Z',
+    shiftX: 0,
+    shiftY: 1.4,
+    clip: 'polygon(0% 0%, 100% 0%, 50% 50%)',
+  },
+  5: {
+    d: 'M 224.63 39.37 A 131 131 0 0 1 224.63 224.63 L 167.36 167.36 A 50 50 0 0 0 167.36 96.64 Z',
+    shiftX: -1.4,
+    shiftY: 0,
+    clip: 'polygon(100% 0%, 100% 100%, 50% 50%)',
+  },
+  7: {
+    d: 'M 224.63 224.63 A 131 131 0 0 1 39.37 224.63 L 96.64 167.36 A 50 50 0 0 0 167.36 167.36 Z',
+    shiftX: 0,
+    shiftY: -1.4,
+    clip: 'polygon(100% 100%, 0% 100%, 50% 50%)',
+  },
+  3: {
+    d: 'M 39.37 224.63 A 131 131 0 0 1 39.37 39.37 L 96.64 96.64 A 50 50 0 0 0 96.64 167.36 Z',
+    shiftX: 1.4,
+    shiftY: 0,
+    clip: 'polygon(0% 100%, 0% 0%, 50% 50%)',
+  },
+}
+
+function resolveClickpadPolarSlot(
+  el: HTMLElement,
+  clientX: number,
+  clientY: number,
+): 1 | 3 | 5 | 7 | null {
+  const rect = el.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return null
+  const cx = rect.left + rect.width / 2
+  const cy = rect.top + rect.height / 2
+  const dx = clientX - cx
+  const dy = clientY - cy
+  const dist = Math.hypot(dx, dy)
+  const outerR = rect.width / 2
+  const innerR = outerR * 0.375
+  if (dist <= innerR || dist > outerR * 1.05) return null
+  const deg = (Math.atan2(dy, dx) * 180) / Math.PI
+  if (deg >= -135 && deg < -45) return 1
+  if (deg >= -45 && deg < 45) return 5
+  if (deg >= 45 && deg < 135) return 7
+  return 3
+}
+
 interface CircularClickpadZoneProps {
   pageId: string
   zone: MobileDeckZone
@@ -567,9 +659,9 @@ function CircularClickpadZone({
     flashTimerRef.current = setTimeout(() => {
       setFlashRingSlot(null)
       flashTimerRef.current = null
-    }, 200)
+    }, 180)
 
-    triggerHaptic('tap')
+    triggerHaptic('detent')
     if (dirTileId) {
       const reqId = getClient().sendTileActivate(dirTileId, 'tap')
       registerPendingTileRequest(reqId, dirTileId)
@@ -601,14 +693,23 @@ function CircularClickpadZone({
       '[data-clickpad-slot]',
     ) as HTMLElement | null
     const rawSlot = targetEl?.dataset.clickpadSlot
-    const slotNum = rawSlot ? Number.parseInt(rawSlot, 10) : NaN
+    let slotNum = rawSlot ? Number.parseInt(rawSlot, 10) : NaN
+    if (!(slotNum === 1 || slotNum === 3 || slotNum === 5 || slotNum === 7)) {
+      const polar = resolveClickpadPolarSlot(e.currentTarget, e.clientX, e.clientY)
+      if (polar !== null) slotNum = polar
+    }
+
     const isCardinalSlot =
       slotNum === 1 || slotNum === 3 || slotNum === 5 || slotNum === 7
     const hitTile = isCardinalSlot && slots[slotNum] ? byId.get(slots[slotNum]) : undefined
 
-    if (hitTile && isCardinalSlot) {
+    if (isCardinalSlot) {
       setPressedRingSlot(slotNum)
-      controllerRef.current?.onDown(hitTile)
+      if (hitTile) {
+        controllerRef.current?.onDown(hitTile)
+      } else {
+        triggerHaptic('tap')
+      }
     }
 
     ringGestureRef.current = {
@@ -644,8 +745,8 @@ function CircularClickpadZone({
       if (g.pressedTileId) {
         controllerRef.current?.onCancel(g.pressedTileId)
         g.pressedTileId = null
-        setPressedRingSlot(null)
       }
+      setPressedRingSlot(null)
 
       g.swiped = true
       const horiz = Math.abs(totalDx) >= Math.abs(totalDy)
@@ -711,22 +812,25 @@ function CircularClickpadZone({
         selectedEditItem.tileId === tile.id,
     )
 
-  const cardinalCls = (slotIdx: 1 | 3 | 5 | 7, tile: MobileTile | undefined) => {
-    const active = pressedRingSlot === slotIdx || flashRingSlot === slotIdx
-    const selected = isSlotSelected(tile)
-    return clsx(
-      'key-press absolute rounded-full flex items-center justify-center transition-all touch-none select-none',
-      active ? 'ak-text-1 scale-95 bg-white/[0.08]' : 'ak-text-2',
-      selected &&
-        (isLight
-          ? 'ring-2 ring-[#1c1c1e] bg-black/[0.06] ak-text-1'
-          : 'ring-2 ring-[#f2f2f7] bg-white/[0.09] ak-text-1'),
-      tile && fbRing(tile.id),
-    )
-  }
+  const activeCardinalSlot = !editMode ? (pressedRingSlot ?? flashRingSlot) : null
+
+  const ringTiltTransform =
+    activeCardinalSlot === 1
+      ? 'perspective(520px) rotateX(5.2deg)'
+      : activeCardinalSlot === 7
+        ? 'perspective(520px) rotateX(-5.2deg)'
+        : activeCardinalSlot === 3
+          ? 'perspective(520px) rotateY(-5.2deg)'
+          : activeCardinalSlot === 5
+            ? 'perspective(520px) rotateY(5.2deg)'
+            : centerPressed && !editMode
+              ? 'scale(0.99)'
+              : undefined
+
+  const sectorGradPrefix = `ring-sec-${zone.id}`
 
   return (
-    <div className="my-auto py-1 flex items-center justify-center">
+    <div className="my-auto py-2 flex items-center justify-center">
       <div
         role="group"
         aria-label="触控圆盘"
@@ -741,58 +845,172 @@ function CircularClickpadZone({
           triggerHaptic('tap')
           setSelectedEditItem({ kind: 'zone', pageId, zoneId: zone.id })
         }}
+        style={ringTiltTransform ? { transform: ringTiltTransform } : undefined}
         className={clsx(
-          'clickpad-ring relative rounded-full border flex items-center justify-center touch-none select-none transition-all',
-          compact ? 'w-[196px] h-[196px]' : 'w-[220px] h-[220px]',
+          'clickpad-ring relative rounded-full border flex items-center justify-center touch-none select-none overflow-hidden',
+          compact
+            ? 'w-[204px] h-[204px]'
+            : 'w-[min(72vw,264px)] h-[min(72vw,264px)]',
           isZoneSelected &&
             (isLight ? 'ring-2 ring-[#1c1c1e]' : 'ring-2 ring-[#f2f2f7]'),
         )}
       >
-        {/* Up */}
+        {/* True 1/4 Annular Sector Geometry + 45-Degree Machined Bevels */}
+        <svg
+          viewBox="0 0 264 264"
+          data-testid="clickpad-sector-svg"
+          aria-hidden="true"
+          className="absolute inset-0 w-full h-full pointer-events-none"
+        >
+          <defs>
+            <radialGradient id={`${sectorGradPrefix}-press`} cx="50%" cy="50%" r="50%">
+              <stop
+                offset="36%"
+                stopColor={isLight ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.05)'}
+              />
+              <stop
+                offset="100%"
+                stopColor={isLight ? 'rgba(0,0,0,0.13)' : 'rgba(255,255,255,0.17)'}
+              />
+            </radialGradient>
+          </defs>
+
+          {([1, 5, 7, 3] as const).map((slotIdx) => {
+            const tile = slots[slotIdx] ? byId.get(slots[slotIdx]) : undefined
+            const active = activeCardinalSlot === slotIdx
+            const selected = isSlotSelected(tile)
+            const spec = CLICKPAD_SECTOR_PATHS[slotIdx]
+
+            return (
+              <path
+                key={slotIdx}
+                d={spec.d}
+                data-sector-slot={slotIdx}
+                data-sector-active={active ? 'true' : 'false'}
+                fill={
+                  active
+                    ? `url(#${sectorGradPrefix}-press)`
+                    : selected
+                      ? isLight
+                        ? 'rgba(0,0,0,0.08)'
+                        : 'rgba(255,255,255,0.10)'
+                      : 'transparent'
+                }
+                stroke={
+                  active || selected
+                    ? isLight
+                      ? 'rgba(0,0,0,0.20)'
+                      : 'rgba(255,255,255,0.24)'
+                    : 'transparent'
+                }
+                strokeWidth={active || selected ? 1.25 : 0}
+                style={{
+                  transform: active
+                    ? `translate(${spec.shiftX}px, ${spec.shiftY}px)`
+                    : 'translate(0px, 0px)',
+                  transition: 'transform 80ms ease-out, fill 90ms ease-out, stroke 90ms ease-out',
+                }}
+              />
+            )
+          })}
+
+          {/* Subtle 45-degree quarter-ring bevel seams */}
+          <g
+            stroke={isLight ? 'rgba(0,0,0,0.065)' : 'rgba(255,255,255,0.065)'}
+            strokeWidth={1}
+          >
+            <line x1="96.64" y1="96.64" x2="39.37" y2="39.37" />
+            <line x1="167.36" y1="96.64" x2="224.63" y2="39.37" />
+            <line x1="167.36" y1="167.36" x2="224.63" y2="224.63" />
+            <line x1="96.64" y1="167.36" x2="39.37" y2="224.63" />
+          </g>
+        </svg>
+
+        {/* Up 1/4 Quadrant Button */}
         <button
           type="button"
           aria-label={upTile?.label ?? CLICKPAD_RING_SLOT_SPECS[0].label}
           data-clickpad-slot={1}
+          style={{ clipPath: CLICKPAD_SECTOR_PATHS[1].clip }}
           onClick={editMode ? (e) => handleEditSlotSelect(1, e) : undefined}
-          className={clsx(cardinalCls(1, upTile), 'top-2 w-16 h-12')}
+          className={clsx(
+            'absolute inset-0 flex items-start justify-center pt-[13%] transition-colors touch-none select-none focus:outline-none',
+            activeCardinalSlot === 1 || isSlotSelected(upTile) ? 'ak-text-1' : 'ak-text-2',
+          )}
         >
-          <ChevronUp className="w-5 h-5" strokeWidth={2.1} />
+          <ChevronUp
+            className={clsx(
+              'w-5 h-5 transition-transform duration-75',
+              activeCardinalSlot === 1 && 'translate-y-[1.5px] scale-95',
+            )}
+            strokeWidth={2.2}
+          />
         </button>
 
-        {/* Down */}
+        {/* Down 1/4 Quadrant Button */}
         <button
           type="button"
           aria-label={downTile?.label ?? CLICKPAD_RING_SLOT_SPECS[4].label}
           data-clickpad-slot={7}
+          style={{ clipPath: CLICKPAD_SECTOR_PATHS[7].clip }}
           onClick={editMode ? (e) => handleEditSlotSelect(7, e) : undefined}
-          className={clsx(cardinalCls(7, downTile), 'bottom-2 w-16 h-12')}
+          className={clsx(
+            'absolute inset-0 flex items-end justify-center pb-[13%] transition-colors touch-none select-none focus:outline-none',
+            activeCardinalSlot === 7 || isSlotSelected(downTile) ? 'ak-text-1' : 'ak-text-2',
+          )}
         >
-          <ChevronDown className="w-5 h-5" strokeWidth={2.1} />
+          <ChevronDown
+            className={clsx(
+              'w-5 h-5 transition-transform duration-75',
+              activeCardinalSlot === 7 && '-translate-y-[1.5px] scale-95',
+            )}
+            strokeWidth={2.2}
+          />
         </button>
 
-        {/* Left */}
+        {/* Left 1/4 Quadrant Button */}
         <button
           type="button"
           aria-label={leftTile?.label ?? CLICKPAD_RING_SLOT_SPECS[1].label}
           data-clickpad-slot={3}
+          style={{ clipPath: CLICKPAD_SECTOR_PATHS[3].clip }}
           onClick={editMode ? (e) => handleEditSlotSelect(3, e) : undefined}
-          className={clsx(cardinalCls(3, leftTile), 'left-2 w-12 h-16')}
+          className={clsx(
+            'absolute inset-0 flex items-center justify-start pl-[13%] transition-colors touch-none select-none focus:outline-none',
+            activeCardinalSlot === 3 || isSlotSelected(leftTile) ? 'ak-text-1' : 'ak-text-2',
+          )}
         >
-          <ChevronLeft className="w-5 h-5" strokeWidth={2.1} />
+          <ChevronLeft
+            className={clsx(
+              'w-5 h-5 transition-transform duration-75',
+              activeCardinalSlot === 3 && 'translate-x-[1.5px] scale-95',
+            )}
+            strokeWidth={2.2}
+          />
         </button>
 
-        {/* Right */}
+        {/* Right 1/4 Quadrant Button */}
         <button
           type="button"
           aria-label={rightTile?.label ?? CLICKPAD_RING_SLOT_SPECS[3].label}
           data-clickpad-slot={5}
+          style={{ clipPath: CLICKPAD_SECTOR_PATHS[5].clip }}
           onClick={editMode ? (e) => handleEditSlotSelect(5, e) : undefined}
-          className={clsx(cardinalCls(5, rightTile), 'right-2 w-12 h-16')}
+          className={clsx(
+            'absolute inset-0 flex items-center justify-end pr-[13%] transition-colors touch-none select-none focus:outline-none',
+            activeCardinalSlot === 5 || isSlotSelected(rightTile) ? 'ak-text-1' : 'ak-text-2',
+          )}
         >
-          <ChevronRight className="w-5 h-5" strokeWidth={2.1} />
+          <ChevronRight
+            className={clsx(
+              'w-5 h-5 transition-transform duration-75',
+              activeCardinalSlot === 5 && '-translate-x-[1.5px] scale-95',
+            )}
+            strokeWidth={2.2}
+          />
         </button>
 
-        {/* Center 86px Concave Confirm Button */}
+        {/* Center Concave Confirm Disk (37.5% diameter -> ~99px on 264px ring) */}
         <button
           type="button"
           aria-label={okTile?.label ?? '确定'}
@@ -818,22 +1036,13 @@ function CircularClickpadZone({
           }}
           onClick={editMode ? (e) => handleEditSlotSelect(4, e) : undefined}
           className={clsx(
-            'clickpad-center rounded-full border flex items-center justify-center gap-1.5 px-2 text-xs font-semibold tracking-wider touch-none select-none',
-            compact ? 'w-[78px] h-[78px]' : 'w-[86px] h-[86px]',
-            centerPressed && !editMode && 'scale-[0.96]',
+            'clickpad-center relative z-10 w-[37.5%] h-[37.5%] rounded-full border flex items-center justify-center px-2 text-xs font-semibold tracking-wider touch-none select-none',
+            centerPressed && !editMode && 'scale-[0.95]',
             isSlotSelected(okTile) &&
               (isLight ? 'ring-2 ring-[#1c1c1e]' : 'ring-2 ring-[#f2f2f7]'),
             okTile && fbRing(okTile.id),
           )}
         >
-          {okTile && okTile.accent !== 'slate' && (
-            <span
-              className={clsx(
-                'w-[5px] h-[5px] rounded-full shrink-0',
-                getAccentStyle(okTile.accent, isLight).dot,
-              )}
-            />
-          )}
           <span className="truncate">{okTile?.label ?? '确定'}</span>
         </button>
       </div>
@@ -841,8 +1050,68 @@ function CircularClickpadZone({
   )
 }
 
-const GESTURE_PAD_SWIPE_PX = 32
+const RADIAL_AIM_LOCK_PX = 26
+const RADIAL_CANCEL_RETURN_PX = 15
 const GESTURE_PAD_TAP_MAX_PX = 12
+
+/**
+ * 4 radial wedges in a 220x220 viewBox (center 110,110; inner r=38; outer R=92).
+ * Slot indices strictly match protocol: 0=Up, 1=Down, 2=Left, 3=Right.
+ */
+const RADIAL_WHEEL_SECTORS: readonly {
+  slotIdx: 0 | 1 | 2 | 3
+  arrow: string
+  wedgePath: string
+  rimArcPath: string
+  expandX: number
+  expandY: number
+  labelPosCls: string
+}[] = [
+  {
+    slotIdx: 0,
+    arrow: '↑',
+    wedgePath: 'M 44.95 44.95 A 92 92 0 0 1 175.05 44.95 L 136.87 83.13 A 38 38 0 0 0 83.13 83.13 Z',
+    rimArcPath: 'M 41.41 41.41 A 97 97 0 0 1 178.59 41.41',
+    expandX: 0,
+    expandY: -4.5,
+    labelPosCls: 'top-[13%] left-1/2 -translate-x-1/2',
+  },
+  {
+    slotIdx: 3,
+    arrow: '→',
+    wedgePath: 'M 175.05 44.95 A 92 92 0 0 1 175.05 175.05 L 136.87 136.87 A 38 38 0 0 0 136.87 83.13 Z',
+    rimArcPath: 'M 178.59 41.41 A 97 97 0 0 1 178.59 178.59',
+    expandX: 4.5,
+    expandY: 0,
+    labelPosCls: 'right-[6%] top-1/2 -translate-y-1/2',
+  },
+  {
+    slotIdx: 1,
+    arrow: '↓',
+    wedgePath: 'M 175.05 175.05 A 92 92 0 0 1 44.95 175.05 L 83.13 136.87 A 38 38 0 0 0 136.87 136.87 Z',
+    rimArcPath: 'M 178.59 178.59 A 97 97 0 0 1 41.41 178.59',
+    expandX: 0,
+    expandY: 4.5,
+    labelPosCls: 'bottom-[13%] left-1/2 -translate-x-1/2',
+  },
+  {
+    slotIdx: 2,
+    arrow: '←',
+    wedgePath: 'M 44.95 175.05 A 92 92 0 0 1 44.95 44.95 L 83.13 83.13 A 38 38 0 0 0 83.13 136.87 Z',
+    rimArcPath: 'M 41.41 178.59 A 97 97 0 0 1 41.41 41.41',
+    expandX: -4.5,
+    expandY: 0,
+    labelPosCls: 'left-[6%] top-1/2 -translate-y-1/2',
+  },
+]
+
+function resolveRadialSectorByDelta(dx: number, dy: number): 0 | 1 | 2 | 3 {
+  const deg = (Math.atan2(dy, dx) * 180) / Math.PI
+  if (deg >= -135 && deg < -45) return 0
+  if (deg >= -45 && deg < 45) return 3
+  if (deg >= 45 && deg < 135) return 1
+  return 2
+}
 
 interface GestureTriggerPadProps {
   pageId: string
@@ -870,20 +1139,39 @@ function GestureTriggerPad({
 
   const slots = useMemo(() => normalizeGesturePadSlotIds(zone.tileIds), [zone.tileIds])
   const padHeight: EmbeddedPadHeight = zone.padHeight ?? 'standard'
+
   const [flashSlot, setFlashSlot] = useState<number | null>(null)
+  const [pulseKey, setPulseKey] = useState(0)
+  const [trackingState, setTrackingState] = useState<{
+    active: boolean
+    puckX: number
+    puckY: number
+    aimedSlot: 0 | 1 | 2 | 3 | null
+    canceledInCenter: boolean
+  }>({
+    active: false,
+    puckX: 0,
+    puckY: 0,
+    aimedSlot: null,
+    canceledInCenter: false,
+  })
 
   const gestureRef = useRef<{
     pointerId: number | null
     startX: number
     startY: number
     maxDist: number
-    swiped: boolean
+    everAimed: boolean
+    aimedSlot: 0 | 1 | 2 | 3 | null
+    canceledInCenter: boolean
   }>({
     pointerId: null,
     startX: 0,
     startY: 0,
     maxDist: 0,
-    swiped: false,
+    everAimed: false,
+    aimedSlot: null,
+    canceledInCenter: false,
   })
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -900,14 +1188,15 @@ function GestureTriggerPad({
     const tileId = slots[slotIdx]
     const tile = tileId ? byId.get(tileId) : undefined
     setFlashSlot(slotIdx)
+    setPulseKey((k) => k + 1)
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
     flashTimerRef.current = setTimeout(() => {
       setFlashSlot(null)
       flashTimerRef.current = null
-    }, 300)
+    }, 340)
 
     if (!tile) {
-      triggerHaptic('tap')
+      triggerHaptic('confirm')
       return
     }
     triggerHaptic(slotIdx === 5 ? 'confirm' : resolveTileHaptic(tile, 'tap'))
@@ -991,26 +1280,43 @@ function GestureTriggerPad({
     return t?.label ?? GESTURE_PAD_SLOT_SPECS[idx].label
   }
 
-  const isSlotActive = (idx: number) => {
+  const isSlotFlashing = (idx: number) => {
     if (flashSlot === idx) return true
     const id = slots[idx]
     if (!id) return false
     const fb = tileFeedback[id]
-    return Boolean(fb && Date.now() - fb.at < 500 && fb.status === 'ok')
+    return Boolean(fb && Date.now() - fb.at < 480 && fb.status === 'ok')
   }
 
-  const heightCls =
+  const wheelSizeCls =
     padHeight === 'compact'
-      ? 'min-h-[148px]'
+      ? 'w-[172px] h-[172px]'
       : padHeight === 'tall'
-        ? 'min-h-[240px]'
-        : 'min-h-[184px]'
+        ? 'w-[228px] h-[228px]'
+        : 'w-[198px] h-[198px]'
 
-  const pillCls = (idx: number) =>
-    clsx(
-      'px-2.5 py-1 rounded-full border text-[11px] font-medium inline-flex items-center gap-1 transition-all max-w-[136px]',
-      isSlotActive(idx) ? 'ak-primary-solid scale-105' : 'ak-elevated ak-text-2',
-    )
+  const containerHeightCls =
+    padHeight === 'compact'
+      ? 'min-h-[192px]'
+      : padHeight === 'tall'
+        ? 'min-h-[256px]'
+        : 'min-h-[220px]'
+
+  const resetTracking = () => {
+    setTrackingState({
+      active: false,
+      puckX: 0,
+      puckY: 0,
+      aimedSlot: null,
+      canceledInCenter: false,
+    })
+  }
+
+  const hasDoubleTile = Boolean(slots[5] && byId.has(slots[5]))
+  const aimedSectorSpec =
+    trackingState.aimedSlot !== null
+      ? RADIAL_WHEEL_SECTORS.find((s) => s.slotIdx === trackingState.aimedSlot)
+      : undefined
 
   return (
     <div
@@ -1024,35 +1330,87 @@ function GestureTriggerPad({
           startX: e.clientX,
           startY: e.clientY,
           maxDist: 0,
-          swiped: false,
+          everAimed: false,
+          aimedSlot: null,
+          canceledInCenter: false,
         }
+        setTrackingState({
+          active: true,
+          puckX: 0,
+          puckY: 0,
+          aimedSlot: null,
+          canceledInCenter: false,
+        })
       }}
       onPointerMove={(e) => {
         const g = gestureRef.current
-        if (g.pointerId !== e.pointerId || g.swiped) return
+        if (g.pointerId !== e.pointerId) return
         const dx = e.clientX - g.startX
         const dy = e.clientY - g.startY
         const dist = Math.hypot(dx, dy)
         g.maxDist = Math.max(g.maxDist, dist)
-        if (dist > GESTURE_PAD_SWIPE_PX) {
-          g.swiped = true
+
+        // Smooth rubber-band damping for 1:1 finger-tracking puck (max visual radius = 58 units)
+        const angle = Math.atan2(dy, dx)
+        const dampedR = dist > 0.5 ? 58 * (1 - Math.exp(-dist / 54)) : 0
+        const puckX = Math.cos(angle) * dampedR
+        const puckY = Math.sin(angle) * dampedR
+
+        let nextAimed = g.aimedSlot
+        let nextCanceled = g.canceledInCenter
+
+        if (dist >= RADIAL_AIM_LOCK_PX) {
           if (tapTimerRef.current) {
             clearTimeout(tapTimerRef.current)
             tapTimerRef.current = null
           }
           waitingDoubleRef.current = false
-          const slotIdx =
-            Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 3 : 2) : dy > 0 ? 1 : 0
-          triggerSlot(slotIdx)
+          const sector = resolveRadialSectorByDelta(dx, dy)
+          if (sector !== g.aimedSlot) {
+            triggerHaptic('detent')
+          }
+          g.everAimed = true
+          nextAimed = sector
+          nextCanceled = false
+        } else if (g.everAimed && dist < RADIAL_CANCEL_RETURN_PX) {
+          if (g.aimedSlot !== null) {
+            triggerHaptic('detent')
+          }
+          nextAimed = null
+          nextCanceled = true
         }
+
+        g.aimedSlot = nextAimed
+        g.canceledInCenter = nextCanceled
+
+        setTrackingState({
+          active: true,
+          puckX,
+          puckY,
+          aimedSlot: nextAimed,
+          canceledInCenter: nextCanceled,
+        })
       }}
       onPointerUp={(e) => {
         const g = gestureRef.current
         if (g.pointerId !== e.pointerId) return
         g.pointerId = null
-        if (g.swiped || g.maxDist > GESTURE_PAD_TAP_MAX_PX) return
+        const finalAimed = g.aimedSlot
+        const wasEverAimed = g.everAimed
+        const wasCanceled = g.canceledInCenter
+        const maxDist = g.maxDist
 
-        const hasDoubleTile = Boolean(slots[5] && byId.has(slots[5]))
+        resetTracking()
+
+        if (wasEverAimed) {
+          if (finalAimed !== null && !wasCanceled) {
+            triggerSlot(finalAimed)
+          }
+          return
+        }
+
+        if (maxDist > GESTURE_PAD_TAP_MAX_PX) return
+
         if (!hasDoubleTile) {
           triggerSlot(4)
           return
@@ -1078,43 +1436,207 @@ function GestureTriggerPad({
       }}
       onPointerCancel={() => {
         gestureRef.current.pointerId = null
-        gestureRef.current.swiped = false
+        resetTracking()
       }}
       className={clsx(
-        'chassis-well relative rounded-[26px] border p-3 flex flex-col items-center justify-between touch-none select-none overflow-hidden',
-        heightCls,
+        'chassis-well relative rounded-[26px] border p-2.5 flex items-center justify-center touch-none select-none overflow-hidden',
+        containerHeightCls,
       )}
     >
-      <div className={pillCls(0)}>
-        <span className="font-mono opacity-65">↑</span>
-        <span className="truncate">{slotLabel(0)}</span>
-      </div>
+      {/* Interactive PC / Game Radial Marking Wheel */}
+      <div className={clsx('relative flex items-center justify-center', wheelSizeCls)}>
+        {pulseKey > 0 && flashSlot !== null && (
+          <div
+            key={pulseKey}
+            aria-hidden="true"
+            className={clsx(
+              'pointer-events-none absolute inset-2 rounded-full border-2 animate-[radialPulseBloom_340ms_ease-out_forwards]',
+              isLight ? 'border-black/25' : 'border-white/30',
+            )}
+          />
+        )}
 
-      <div className="w-full flex items-center justify-between gap-2 my-auto">
-        <div className={pillCls(2)}>
-          <span className="font-mono opacity-65">←</span>
-          <span className="truncate">{slotLabel(2)}</span>
+        <svg
+          viewBox="0 0 220 220"
+          data-testid="radial-wheel-svg"
+          aria-hidden="true"
+          className="w-full h-full overflow-visible pointer-events-none"
+        >
+          {/* Outer precision dial ring */}
+          <circle
+            cx="110"
+            cy="110"
+            r="96"
+            fill="none"
+            stroke={isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)'}
+            strokeWidth="1"
+          />
+
+          {/* 4 Annular Radial Sectors */}
+          {RADIAL_WHEEL_SECTORS.map((sec) => {
+            const isAimed = trackingState.aimedSlot === sec.slotIdx
+            const isFlashing = isSlotFlashing(sec.slotIdx)
+            const highlighted = isAimed || isFlashing
+            const dimmed =
+              trackingState.aimedSlot !== null && !highlighted
+
+            const fill = highlighted
+              ? isLight
+                ? '#1c1c1e'
+                : '#f2f2f7'
+              : isLight
+                ? 'rgba(255,255,255,0.82)'
+                : 'rgba(31,32,37,0.92)'
+
+            const stroke = highlighted
+              ? isLight
+                ? '#1c1c1e'
+                : '#ffffff'
+              : isLight
+                ? 'rgba(0,0,0,0.06)'
+                : 'rgba(255,255,255,0.07)'
+
+            return (
+              <g
+                key={sec.slotIdx}
+                data-radial-sector={sec.slotIdx}
+                data-radial-active={highlighted ? 'true' : 'false'}
+                style={{
+                  transform: highlighted
+                    ? `translate(${sec.expandX}px, ${sec.expandY}px)`
+                    : 'translate(0px, 0px)',
+                  opacity: dimmed ? 0.52 : 1,
+                  transition:
+                    'transform 110ms cubic-bezier(0.22, 1, 0.36, 1), opacity 110ms ease',
+                }}
+              >
+                <path d={sec.wedgePath} fill={fill} stroke={stroke} strokeWidth="1.15" />
+                {highlighted && (
+                  <path
+                    d={sec.rimArcPath}
+                    fill="none"
+                    stroke={isLight ? '#007aff' : '#30d158'}
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                  />
+                )}
+              </g>
+            )
+          })}
+
+          {/* 1:1 Elastic Vector Line & Tactile Thumb Puck */}
+          {trackingState.active && (
+            <g data-testid="radial-wheel-puck">
+              <line
+                x1="110"
+                y1="110"
+                x2={110 + trackingState.puckX}
+                y2={110 + trackingState.puckY}
+                stroke={
+                  trackingState.aimedSlot !== null
+                    ? isLight
+                      ? 'rgba(28,28,30,0.45)'
+                      : 'rgba(242,242,247,0.55)'
+                    : isLight
+                      ? 'rgba(0,0,0,0.18)'
+                      : 'rgba(255,255,255,0.22)'
+                }
+                strokeWidth="1.75"
+                strokeDasharray={trackingState.aimedSlot === null ? '3 3' : undefined}
+              />
+              <circle
+                cx={110 + trackingState.puckX}
+                cy={110 + trackingState.puckY}
+                r={trackingState.aimedSlot !== null ? 9 : 7}
+                fill={
+                  trackingState.canceledInCenter
+                    ? '#ef4444'
+                    : isLight
+                      ? '#1c1c1e'
+                      : '#f2f2f7'
+                }
+                stroke={isLight ? '#ffffff' : '#141518'}
+                strokeWidth="2"
+              />
+            </g>
+          )}
+        </svg>
+
+        {/* Sector Action Labels */}
+        {RADIAL_WHEEL_SECTORS.map((sec) => {
+          const highlighted =
+            trackingState.aimedSlot === sec.slotIdx || isSlotFlashing(sec.slotIdx)
+          const tileId = slots[sec.slotIdx]
+          const tile = tileId ? byId.get(tileId) : undefined
+          const Icon = getTileIcon(tile?.icon ?? GESTURE_PAD_SLOT_SPECS[sec.slotIdx].icon)
+          const accent = getAccentStyle(tile?.accent ?? 'slate', isLight)
+
+          return (
+            <div
+              key={sec.slotIdx}
+              style={{
+                transform: highlighted
+                  ? `translate(${sec.expandX}px, ${sec.expandY}px)`
+                  : undefined,
+              }}
+              className={clsx(
+                'pointer-events-none absolute flex items-center gap-1 max-w-[74px] transition-all duration-100',
+                sec.labelPosCls,
+                highlighted
+                  ? isLight
+                    ? 'text-white font-semibold'
+                    : 'text-[#141518] font-semibold'
+                  : 'ak-text-1',
+              )}
+            >
+              <Icon
+                className={clsx('w-3 h-3 shrink-0', !highlighted && accent.iconText)}
+                strokeWidth={2.1}
+              />
+              <span className="text-[10.5px] leading-none truncate">
+                {slotLabel(sec.slotIdx)}
+              </span>
+            </div>
+          )
+        })}
+
+        {/* Central Hub Live Readout (Tap / 2x Tap / Live Aimed Sector / Cancel) */}
+        <div
+          className={clsx(
+            'pointer-events-none absolute w-[68px] h-[68px] rounded-full border flex flex-col items-center justify-center px-1.5 text-center transition-all duration-100',
+            trackingState.canceledInCenter
+              ? 'bg-rose-500/15 border-rose-500/40 text-rose-500 scale-95'
+              : aimedSectorSpec
+                ? 'ak-primary-solid scale-105 shadow-md'
+                : isSlotFlashing(4) || isSlotFlashing(5)
+                  ? 'ak-primary-solid scale-95'
+                  : 'ak-elevated-alt',
+          )}
+        >
+          {trackingState.canceledInCenter ? (
+            <span className="text-[10px] font-semibold">松开取消</span>
+          ) : aimedSectorSpec ? (
+            <>
+              <span className="text-[10px] font-mono opacity-80 leading-none">
+                {aimedSectorSpec.arrow}
+              </span>
+              <span className="text-[10.5px] font-semibold truncate max-w-full mt-0.5">
+                {slotLabel(aimedSectorSpec.slotIdx)}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="text-[10.5px] font-medium ak-text-1 truncate max-w-full">
+                {slotLabel(4)}
+              </span>
+              {hasDoubleTile && (
+                <span className="text-[9.5px] font-mono ak-text-3 truncate max-w-full mt-0.5">
+                  2× {slotLabel(5)}
+                </span>
+              )}
+            </>
+          )}
         </div>
-
-        <div className="flex items-center gap-1.5 flex-wrap justify-center">
-          <span className={pillCls(4)}>
-            <span className="truncate">{slotLabel(4)}</span>
-          </span>
-          <span className={pillCls(5)}>
-            <span className="font-mono text-[10px] opacity-65">2×</span>
-            <span className="truncate">{slotLabel(5)}</span>
-          </span>
-        </div>
-
-        <div className={pillCls(3)}>
-          <span className="truncate">{slotLabel(3)}</span>
-          <span className="font-mono opacity-65">→</span>
-        </div>
-      </div>
-
-      <div className={pillCls(1)}>
-        <span className="font-mono opacity-65">↓</span>
-        <span className="truncate">{slotLabel(1)}</span>
       </div>
     </div>
   )
@@ -1282,7 +1804,7 @@ export function PageZoneRenderer({ page, compact = false }: PageZoneRendererProp
     })
     session.currentZones = nextZones
     setDragZones(nextZones)
-    triggerHaptic('tap')
+    triggerHaptic('detent')
   }
 
   const finishTilePointer = (tileId: string, cancelled: boolean) => {
@@ -1350,8 +1872,8 @@ export function PageZoneRenderer({ page, compact = false }: PageZoneRendererProp
         }
       }}
       className={clsx(
-        'w-full flex flex-col gap-2.5 select-none pb-2',
-        hasClickpadRing && 'min-h-full justify-between',
+        'w-full flex flex-col gap-2.5 select-none',
+        hasClickpadRing ? 'min-h-full justify-between py-1.5 px-0.5' : 'pb-2',
       )}
     >
       {effectiveZones.map((zone, zoneIdx) => {
@@ -1397,11 +1919,11 @@ export function PageZoneRenderer({ page, compact = false }: PageZoneRendererProp
                 const isFourColStrip = cols === 4 && packed.totalRows === 1
 
                 const rowMinPx = isTopUtilityStrip
-                  ? 50
+                  ? 48
                   : isFourColStrip
-                    ? 56
+                    ? 54
                     : hasClickpadRing
-                      ? 62
+                      ? 52
                       : 78
 
                 return (
@@ -1435,7 +1957,10 @@ export function PageZoneRenderer({ page, compact = false }: PageZoneRendererProp
                         selectedEditItem?.kind === 'tile' &&
                         selectedEditItem.tileId === tile.id
                       const isCompactUtility = isTopUtilityStrip || isFourColStrip
+                      const isMultiSpan = colSpan > 1 || rowSpan > 1
                       const isTall = colSpan === 1 && rowSpan === 2
+                      const isLarge2x2 = colSpan === 2 && rowSpan === 2
+                      const silkText = isMultiSpan ? resolveTileSilkscreen(tile) : null
 
                       return (
                         <button
@@ -1461,8 +1986,10 @@ export function PageZoneRenderer({ page, compact = false }: PageZoneRendererProp
                                 ? 'px-2 py-2 flex flex-col items-center justify-center gap-1 text-center'
                                 : 'px-3 py-2 flex items-center justify-center gap-2 text-center'
                               : isTall
-                                ? 'p-3.5 flex flex-col items-center justify-center gap-2.5 text-center min-h-[164px]'
-                                : 'p-3 flex flex-col justify-between text-left',
+                                ? 'p-3.5 flex flex-col items-center justify-center gap-2 text-center min-h-[164px]'
+                                : isLarge2x2
+                                  ? 'p-3.5 flex flex-col justify-between text-left min-h-[164px]'
+                                  : 'p-3 flex flex-col justify-between text-left',
                             pressed && !editMode && clsx('tile-pressed', style.pressedGlow),
                             isSelected &&
                               (isLight
@@ -1476,14 +2003,20 @@ export function PageZoneRenderer({ page, compact = false }: PageZoneRendererProp
                           {isCompactUtility ? (
                             isFourColStrip ? (
                               <>
-                                <Icon className={clsx('w-4 h-4 shrink-0', style.iconText)} strokeWidth={1.9} />
+                                <Icon
+                                  className={clsx('w-4 h-4 shrink-0', style.iconText)}
+                                  strokeWidth={1.9}
+                                />
                                 <span className="ak-text-2 text-[11px] font-medium truncate max-w-full">
                                   {tile.label}
                                 </span>
                               </>
                             ) : (
                               <>
-                                <Icon className={clsx('w-4 h-4 shrink-0', style.iconText)} strokeWidth={1.9} />
+                                <Icon
+                                  className={clsx('w-4 h-4 shrink-0', style.iconText)}
+                                  strokeWidth={1.9}
+                                />
                                 <span className="ak-text-1 text-xs font-medium truncate">
                                   {tile.label}
                                 </span>
@@ -1491,36 +2024,48 @@ export function PageZoneRenderer({ page, compact = false }: PageZoneRendererProp
                             )
                           ) : isTall ? (
                             <>
-                              {style.dot && (
-                                <span
-                                  className={clsx(
-                                    'absolute top-3 right-3 w-[5px] h-[5px] rounded-full',
-                                    style.dot,
-                                  )}
-                                />
-                              )}
-                              <Icon className={clsx('w-5 h-5 shrink-0', style.iconText)} strokeWidth={1.9} />
+                              <Icon
+                                className={clsx('w-5 h-5 shrink-0', style.iconText)}
+                                strokeWidth={1.9}
+                              />
                               <span className="ak-text-1 text-xs font-medium leading-snug line-clamp-2">
                                 {tile.label}
                               </span>
+                              {silkText && (
+                                <span
+                                  data-testid="tile-silkscreen"
+                                  className="ak-text-3 text-[10px] font-mono tracking-tight truncate max-w-full"
+                                >
+                                  {silkText}
+                                </span>
+                              )}
                             </>
                           ) : (
                             <>
-                              <div className="w-full flex items-center justify-between gap-1.5">
+                              <div className="w-full flex items-center justify-between gap-2">
                                 <Icon
-                                  className={clsx('w-4 h-4 shrink-0', style.iconText)}
+                                  className={clsx(
+                                    isLarge2x2 ? 'w-5 h-5' : 'w-4 h-4',
+                                    'shrink-0',
+                                    style.iconText,
+                                  )}
                                   strokeWidth={1.9}
                                 />
-                                {style.dot && (
+                                {silkText && (
                                   <span
-                                    className={clsx(
-                                      'w-[5px] h-[5px] rounded-full shrink-0',
-                                      style.dot,
-                                    )}
-                                  />
+                                    data-testid="tile-silkscreen"
+                                    className="ak-text-3 text-[10.5px] font-mono tracking-tight truncate max-w-[68%]"
+                                  >
+                                    {silkText}
+                                  </span>
                                 )}
                               </div>
-                              <div className="ak-text-1 text-[13px] font-medium tracking-tight truncate w-full">
+                              <div
+                                className={clsx(
+                                  'ak-text-1 font-medium tracking-tight truncate w-full',
+                                  isLarge2x2 ? 'text-sm' : 'text-[13px]',
+                                )}
+                              >
                                 {tile.label}
                               </div>
                             </>
@@ -1580,7 +2125,7 @@ export function PageZoneRenderer({ page, compact = false }: PageZoneRendererProp
               />
             )}
 
-            {/* 4. Blind-Swipe Gesture Trigger Pad */}
+            {/* 4. Radial Marking Wheel Gesture Pad (`径向轮盘手势垫`) */}
             {zone.kind === 'gesture-pad' && (
               <GestureTriggerPad
                 pageId={page.id}
