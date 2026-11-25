@@ -125,7 +125,6 @@ function EmbeddedPointerPad({
 }: EmbeddedPointerPadProps) {
   const getClient = useMobileStore((s) => s.getClient)
   const phase = useMobileStore((s) => s.phase)
-  const isDemoMode = useMobileStore((s) => s.isDemoMode)
   const gyroSensitivity = useMobileStore((s) => s.localFeel.gyroSensitivity)
   const threeFingerSystemGestures = useMobileStore(
     (s) => s.localFeel.threeFingerSystemGestures,
@@ -183,7 +182,7 @@ function EmbeddedPointerPad({
   }, [zone.id, editMode, mode, setEmbeddedAirMouseZoneActive])
 
   useEffect(() => {
-    const canStream = phase === 'active' && !isDemoMode && !editMode
+    const canStream = phase === 'active' && !editMode
     if (!canStream || mode === 'trackpad') {
       setNativeGyroClutch(false)
       setNativeGyroConfig('off', gyroSensitivity)
@@ -193,7 +192,7 @@ function EmbeddedPointerPad({
     setNativeGyroConfig('relative', gyroSensitivity)
     setNativeGyroClutch(false)
     setClutchHeld(false)
-  }, [phase, isDemoMode, editMode, mode, gyroSensitivity])
+  }, [phase, editMode, mode, gyroSensitivity])
 
   useEffect(() => {
     if (editMode) {
@@ -443,7 +442,7 @@ function EmbeddedPointerPad({
               e.currentTarget.setPointerCapture?.(e.pointerId)
               setClutchHeld(true)
               triggerHaptic('tap')
-              if (phase === 'active' && !isDemoMode) {
+              if (phase === 'active') {
                 setNativeGyroConfig('relative', gyroSensitivity)
                 setNativeGyroClutch(true)
               }

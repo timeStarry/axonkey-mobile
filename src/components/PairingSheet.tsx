@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, QrCode, RefreshCw, Trash2 } from 'lucide-react'
+import { Check, QrCode, RefreshCw, Trash2, Wifi } from 'lucide-react'
 import { clsx } from 'clsx'
 import { BottomSheet } from './BottomSheet'
 import { useMobileStore } from '../state/useMobileStore'
@@ -21,10 +21,8 @@ export function PairingSheet() {
   const discoveringLan = useMobileStore((s) => s.discoveringLan)
   const hostId = useMobileStore((s) => s.hostId)
   const phase = useMobileStore((s) => s.phase)
-  const isDemoMode = useMobileStore((s) => s.isDemoMode)
   const connectSavedHost = useMobileStore((s) => s.connectSavedHost)
   const discoverAndReconnect = useMobileStore((s) => s.discoverAndReconnect)
-  const connectDemo = useMobileStore((s) => s.connectDemo)
   const pairFromOffer = useMobileStore((s) => s.pairFromOffer)
   const forgetHost = useMobileStore((s) => s.forgetHost)
 
@@ -87,6 +85,12 @@ export function PairingSheet() {
         <span>{isNativeShell() ? '扫码连接新电脑' : '扫码连接（原生 App）'}</span>
       </button>
 
+      {/* Crisp Same-LAN Requirement Notice */}
+      <div className="ak-well px-3 py-2 rounded-[14px] border flex items-center gap-2 text-xs ak-text-2">
+        <Wifi className="w-3.5 h-3.5 shrink-0 ak-text-1" />
+        <span>请确保手机与电脑连接在同一局域网（同一 Wi‑Fi 或热点）下</span>
+      </div>
+
       {savedHosts.length > 0 && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
@@ -106,7 +110,7 @@ export function PairingSheet() {
 
           <div className="space-y-1.5 max-h-44 overflow-y-auto">
             {savedHosts.map((h) => {
-              const current = !isDemoMode && hostId === h.hostId && phase === 'active'
+              const current = hostId === h.hostId && phase === 'active'
               const onlineOnLan = discoveredIds.has(h.hostId)
               return (
                 <div
@@ -210,18 +214,6 @@ export function PairingSheet() {
         </div>
         {parseError && <p className="text-xs text-rose-500">{parseError}</p>}
       </div>
-
-      <button
-        type="button"
-        onClick={() => {
-          triggerHaptic('tap')
-          connectDemo()
-          setOpen(false)
-        }}
-        className="ak-well ak-text-2 w-full h-9 rounded-[14px] border text-xs font-medium"
-      >
-        {isDemoMode ? '模拟体验中' : '切换为本地模拟体验'}
-      </button>
     </BottomSheet>
   )
 }

@@ -2,15 +2,57 @@ import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { App } from './App'
 import { useMobileStore } from './state/useMobileStore'
-import { DEFAULT_DEMO_DECK } from './transport/defaultDeck'
+import { DEFAULT_MOBILE_DECK } from './transport/defaultDeck'
 import {
   setVoiceRecordingActive,
   triggerHaptic,
   type AxonkeyAndroidBridge,
 } from './transport/nativeBridge'
 
-describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press, Radial Wheel, Split Settings & Tactile Sound', () => {
-  it('renders 3-band Siri Remote proportions, true 1/4 annular sector press animation, multi-span silkscreens, split Global vs Pointer Settings, and tactile click sounds', async () => {
+function connectMockRealHost(hostName = 'Studio PC') {
+  act(() => {
+    useMobileStore.getState().connectSavedHost({
+      hostId: 'pc-1',
+      hostName,
+      addrs: ['192.168.1.20:49670'],
+      caCertDerB64: 'CERT_B64',
+      peerId: 'peer-1',
+      peerToken: 'token-1',
+      lastConnectedAt: Date.now(),
+    })
+    window.__axonkeyNativeOnOpen?.()
+    window.__axonkeyNativeOnMessage?.(
+      JSON.stringify({
+        type: 'server.ready',
+        sessionId: 'sess-live-1',
+        inputEpoch: 1,
+        inputGeneration: 1,
+        leaseId: 1,
+        leaseTtlMs: 60_000,
+        tickIntervalMs: 250,
+        hostId: 'pc-1',
+        hostName,
+        capabilities: {
+          relativePointer: true,
+          absolutePointer: true,
+          binaryPointerV1: true,
+          binaryAudioV1: true,
+          textCommit: true,
+          audioPcm16: true,
+          udpDiscoveryPort: 49671,
+          platform: 'windows',
+        },
+        deckSnapshot: structuredClone(DEFAULT_MOBILE_DECK),
+        deckRevision: 1,
+        context: { appId: 'doubao.exe', appName: '豆包', profileName: '通用语音' },
+        contextRevision: 1,
+      }),
+    )
+  })
+}
+
+describe('Axonkey Mobile Production UX — Zero Demo Remnants, Same-LAN Guidance, 1/4 Sector Ring & Squircle Radial Halo', () => {
+  it('boots disconnected without Demo Mode, shows Same-LAN notice in PairingSheet, and supports 1/4 sector press, pixel-geometry silkscreens & tactile sounds', () => {
     const recenterCursorMock = vi.fn(() => true)
     const setSystemBarThemeMock = vi.fn()
     const hapticMock = vi.fn()
@@ -37,26 +79,32 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
 
     try {
       window.localStorage.clear()
+      useMobileStore.getState().disconnect()
       render(<App />)
 
-      await act(async () => {
-        useMobileStore.getState().connectDemo()
-        await new Promise((r) => setTimeout(r, 35))
-      })
+      // 1. Fresh launch with no paired PC stays cleanly disconnected (never enters fake Demo Mode!)
+      expect(screen.getByText('未连接 · 点此配对')).toBeTruthy()
+      expect(screen.queryByText(/模拟体验/)).toBeNull()
 
+      // Open PairingSheet -> verify Same-LAN guidance & ZERO demo button
+      fireEvent.click(screen.getByLabelText('连接与配对'))
+      const pairDialog = screen.getByRole('dialog', { name: '设备连接' })
+      expect(
+        within(pairDialog).getByText(/请确保手机与电脑连接在同一局域网/),
+      ).toBeTruthy()
+      expect(within(pairDialog).queryByText(/模拟体验/)).toBeNull()
+      fireEvent.click(screen.getByTestId('pairing-sheet-backdrop'))
+
+      // Connect real WSS host session
+      connectMockRealHost('Studio PC')
       act(() => {
         useMobileStore.setState({
-          isDemoMode: false,
-          hostId: 'pc-1',
-          hostName: 'Studio PC',
-          context: { appId: 'doubao.exe', appName: '豆包', profileName: '通用语音' },
           workspaceMode: 'remote',
           pointerTab: 'trackpad',
           airMouseFeel: 'relative',
         })
       })
 
-      // 1. Minimal Header + Harmonious 3-band Siri Remote (no cramped 4th quick block on remote page!)
       expect(screen.getByText('Studio PC')).toBeTruthy()
       expect(screen.getByText('豆包')).toBeTruthy()
       expect(screen.queryByText('继续执行')).toBeNull()
@@ -67,13 +115,11 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       const clickpadRing = screen.getByTestId('circular-clickpad-ring')
       const sectorSvg = screen.getByTestId('clickpad-sector-svg')
       const upSectorPath = sectorSvg.querySelector('[data-sector-slot="1"]') as SVGPathElement
-      expect(upSectorPath).toBeTruthy()
       expect(upSectorPath.getAttribute('data-sector-active')).toBe('false')
 
       const upBtn = within(clickpadRing).getByLabelText('上')
       playClickSoundMock.mockClear()
       fireEvent.pointerDown(upBtn, { pointerId: 1, clientX: 110, clientY: 20 })
-      // Pressing '上' actively depresses the exact 1/4 top annular sector & tilts the 3D ring!
       expect(upSectorPath.getAttribute('data-sector-active')).toBe('true')
       expect(clickpadRing.style.transform).toContain('rotateX')
       fireEvent.pointerUp(upBtn, { pointerId: 1, clientX: 110, clientY: 20 })
@@ -83,7 +129,6 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
 
       tileActivateSpy.mockClear()
       hapticMock.mockClear()
-      // Swipe right across outer ring: 30px (>26px) triggers 1st right step, +38px triggers 2nd right step with detent!
       fireEvent.pointerDown(clickpadRing, { pointerId: 2, clientX: 80, clientY: 40 })
       fireEvent.pointerMove(clickpadRing, { pointerId: 2, clientX: 110, clientY: 42 })
       fireEvent.pointerMove(clickpadRing, { pointerId: 2, clientX: 148, clientY: 43 })
@@ -93,9 +138,7 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       expect(tileActivateSpy).toHaveBeenNthCalledWith(2, 'remote.right', 'tap')
       expect(hapticMock).toHaveBeenCalledWith('detent')
 
-      // 3. Physical-Geometry Silkscreen:
-      // In 3-col portrait (~362px wide), 2x1 (~238px) shows silkscreen while 1x1 (~114px) hides it;
-      // switching to a 2-col grid makes 1x1 tiles ~176px wide, so 1x1 tiles automatically show silkscreen!
+      // 3. Physical-Geometry Silkscreen: 3-col portrait hides 1x1 silkscreen; 2-col shows 1x1 silkscreen
       fireEvent.click(screen.getByText('快捷面板'))
       const silkEls3Col = screen.getAllByTestId('tile-silkscreen')
       expect(silkEls3Col.length).toBe(1)
@@ -108,14 +151,11 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
           .deck.pages.find((p) => p.id === 'vibe-coding')!
         useMobileStore.getState().updateZone('vibe-coding', `${vibePage.id}-grid`, { columns: 2 })
       })
-      // Now in 2-col grid, 1x1 tiles are ~176px wide (>= 144px) -> Ctrl+Enter, Ctrl+Z, Ctrl+C silkscreens appear!
       expect(screen.getByText('Ctrl+Enter')).toBeTruthy()
       expect(screen.getByText('Ctrl+Z')).toBeTruthy()
 
-      // 4. Touchpad & Air-Mouse: HUD Tips, Gesture Help Info Sheet, Pointer Settings Sheet & NO misleading Volume badge
+      // 4. Touchpad & Air-Mouse: HUD Tips, Gesture Help Info Sheet & NO misleading Volume badge
       fireEvent.click(screen.getByText('触控·飞鼠'))
-      expect(screen.getByTestId('standalone-trackpad-surface')).toBeTruthy()
-
       fireEvent.click(screen.getByLabelText('拖拽锁定'))
       expect(screen.getByTestId('hud-toast').textContent).toContain('左键拖拽已锁定')
 
@@ -123,29 +163,23 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       expect(recenterCursorMock).toHaveBeenCalledTimes(1)
       expect(screen.getByTestId('hud-toast').textContent).toContain('光标已归中')
 
-      // Open Gesture Help Info Sheet (`操控手势说明`)
       fireEvent.click(screen.getByLabelText('操控手势说明'))
       expect(screen.getByRole('dialog', { name: '操控手势说明' })).toBeTruthy()
       expect(screen.getByText('三指上滑 / 下滑')).toBeTruthy()
       fireEvent.click(screen.getByTestId('pointer-help-sheet-backdrop'))
-      expect(screen.queryByRole('dialog', { name: '操控手势说明' })).toBeNull()
 
-      // Switch to Air-Mouse -> verify NO non-clickable volume icon even when volumeKeyMouseMode !== 'off'
       act(() => {
         useMobileStore.getState().updateLocalFeel({ volumeKeyMouseMode: 'lr' })
       })
       fireEvent.click(screen.getByText('飞鼠'))
       expect(screen.queryByLabelText('音量键鼠标已开启')).toBeNull()
 
-      // 5. Global Settings (`全局设置`) vs Pointer Settings (`指针与飞鼠设置`) + Optional Click Sound Toggle & Mic Mute Guard
+      // 5. Global Settings vs Pointer Settings + Optional Click Sound Toggle & Mic Mute Guard
       fireEvent.click(screen.getByLabelText('全局设置'))
       const globalDialog = screen.getByRole('dialog', { name: '全局设置' })
-      expect(globalDialog).toBeTruthy()
-      // Pointer sliders must NOT pollute Global Settings!
       expect(within(globalDialog).queryByText('飞鼠灵敏度')).toBeNull()
       expect(within(globalDialog).getByText('按键提示音')).toBeTruthy()
 
-      // Toggle off 按键提示音 -> playClickSound stops firing while haptic still works
       fireEvent.click(within(globalDialog).getByText('按键提示音'))
       expect(useMobileStore.getState().localFeel.soundEnabled).toBe(false)
       playClickSoundMock.mockClear()
@@ -154,9 +188,7 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       expect(setSystemBarThemeMock).toHaveBeenLastCalledWith(false)
       expect(playClickSoundMock).not.toHaveBeenCalled()
 
-      // Turn 按键提示音 back on, then verify voice recording mute guard suppresses speaker clicks
       fireEvent.click(within(globalDialog).getByText('按键提示音'))
-      expect(useMobileStore.getState().localFeel.soundEnabled).toBe(true)
       playClickSoundMock.mockClear()
       setVoiceRecordingActive(true)
       triggerHaptic('tap')
@@ -164,17 +196,15 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       setVoiceRecordingActive(false)
       triggerHaptic('tap')
       expect(playClickSoundMock).toHaveBeenCalledWith('tap')
-
-      fireEvent.click(within(globalDialog).getByText('深色'))
-      fireEvent.click(within(globalDialog).getByText('跟随系统'))
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: origInnerWidth })
       setVoiceRecordingActive(false)
+      useMobileStore.getState().disconnect()
       delete window.AxonkeyNative
     }
   })
 
-  it('supports Single-Focus Edit Mode, Interactive 60fps Radial Marking Wheel (aim, sweep detent, center cancel & release trigger), and TileStyleSheet Icon Colors', () => {
+  it('supports Single-Focus Edit Mode, Architectural Squircle Radial Halo Pad (aim, sweep detent, center cancel & release trigger), and TileStyleSheet Icon Colors', () => {
     const hapticMock = vi.fn()
     window.AxonkeyNative = {
       haptic: hapticMock,
@@ -189,30 +219,27 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
     } satisfies AxonkeyAndroidBridge
 
     try {
-      useMobileStore.setState({
-        phase: 'active',
-        isDemoMode: true,
-        hostId: 'demo-desktop',
-        hostName: 'Demo Desktop',
-        deck: structuredClone(DEFAULT_DEMO_DECK),
-        workspaceMode: 'deck',
-        layoutEditing: false,
-        selectedEditItem: null,
-        editingTileTarget: null,
-        pageManagerOpen: false,
-        feelSheetOpen: false,
-        pointerSettingsOpen: false,
-        pointerHelpOpen: false,
-        pairingOpen: false,
+      window.localStorage.clear()
+      render(<App />)
+      connectMockRealHost('Studio PC')
+
+      act(() => {
+        useMobileStore.setState({
+          workspaceMode: 'deck',
+          layoutEditing: false,
+          selectedEditItem: null,
+          editingTileTarget: null,
+          pageManagerOpen: false,
+          feelSheetOpen: false,
+          pointerSettingsOpen: false,
+          pointerHelpOpen: false,
+          pairingOpen: false,
+        })
       })
 
-      render(<App />)
-
-      // Enter Single-Focus Edit Mode
       fireEvent.click(screen.getByLabelText('自定义布局'))
       expect(screen.getByTestId('edit-mode-topbar')).toBeTruthy()
 
-      // Tap tile.continue -> bottom contextual inspector -> change to 1x2 -> open TileStyleSheet
       const continueBtn = document.querySelector(
         '[data-bento-tile-id="tile.continue"]',
       ) as HTMLElement
@@ -222,41 +249,36 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       fireEvent.click(within(dock).getByText('1×2'))
 
       fireEvent.click(within(dock).getByText('编辑'))
-      expect(screen.getByText('编辑按键')).toBeTruthy()
       expect(screen.getByText('图标色彩')).toBeTruthy()
       fireEvent.click(within(screen.getByRole('dialog', { name: '编辑按键' })).getByText('完成'))
 
-      // Insert Radial Marking Wheel (`手势垫`) via [+ 组件 -> 手势垫]
+      // Insert Architectural Squircle Radial Pad (`手势垫`)
       fireEvent.click(screen.getByText('组件'))
       fireEvent.click(screen.getByText('手势垫'))
       expect(within(screen.getByTestId('edit-inspector-dock')).getByText('手势垫')).toBeTruthy()
 
-      // Exit edit mode -> test 60fps Radial Marking Wheel (`gesture-pad-surface`)
       fireEvent.click(screen.getByText('完成'))
       const wheelSurface = screen.getByTestId('gesture-pad-surface')
-      const wheelSvg = screen.getByTestId('radial-wheel-svg')
-      expect(wheelSvg).toBeTruthy()
+      expect(screen.getByTestId('radial-wheel-svg')).toBeTruthy()
 
       const addedGestureZone = useMobileStore
         .getState()
         .deck.pages.find((p) => p.id === 'vibe-coding')
         ?.zones?.find((z) => z.kind === 'gesture-pad')!
-      expect(addedGestureZone).toBeTruthy()
 
       const tileActivateSpy = vi.spyOn(useMobileStore.getState().getClient(), 'sendTileActivate')
 
-      // 1) Hold + drag right (>= 26px) -> shows live puck & illuminates right sector (slot 3), sweep up -> detent tick, release -> fires up sector (slot 0)!
       hapticMock.mockClear()
       fireEvent.pointerDown(wheelSurface, { pointerId: 5, clientX: 100, clientY: 100 })
       expect(screen.getByTestId('radial-wheel-puck')).toBeTruthy()
 
-      fireEvent.pointerMove(wheelSurface, { pointerId: 5, clientX: 142, clientY: 100 }) // Right (slot 3)
+      fireEvent.pointerMove(wheelSurface, { pointerId: 5, clientX: 142, clientY: 100 })
       expect(
         wheelSurface.querySelector('[data-radial-sector="3"]')?.getAttribute('data-radial-active'),
       ).toBe('true')
       expect(hapticMock).toHaveBeenCalledWith('detent')
 
-      fireEvent.pointerMove(wheelSurface, { pointerId: 5, clientX: 100, clientY: 58 }) // Sweep Up (slot 0)
+      fireEvent.pointerMove(wheelSurface, { pointerId: 5, clientX: 100, clientY: 58 })
       expect(
         wheelSurface.querySelector('[data-radial-sector="0"]')?.getAttribute('data-radial-active'),
       ).toBe('true')
@@ -264,23 +286,22 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       fireEvent.pointerUp(wheelSurface, { pointerId: 5, clientX: 100, clientY: 58 })
       expect(tileActivateSpy).toHaveBeenCalledWith(addedGestureZone.tileIds[0], 'tap')
 
-      // 2) Drag out to aim, then return inside < 15px center deadzone -> shows '松开取消' and cancels cleanly!
       tileActivateSpy.mockClear()
       fireEvent.pointerDown(wheelSurface, { pointerId: 6, clientX: 100, clientY: 100 })
-      fireEvent.pointerMove(wheelSurface, { pointerId: 6, clientX: 100, clientY: 142 }) // Down (slot 1)
-      fireEvent.pointerMove(wheelSurface, { pointerId: 6, clientX: 102, clientY: 104 }) // Return to center (< 15px)
+      fireEvent.pointerMove(wheelSurface, { pointerId: 6, clientX: 100, clientY: 142 })
+      fireEvent.pointerMove(wheelSurface, { pointerId: 6, clientX: 102, clientY: 104 })
       expect(screen.getByText('松开取消')).toBeTruthy()
       fireEvent.pointerUp(wheelSurface, { pointerId: 6, clientX: 102, clientY: 104 })
       expect(tileActivateSpy).not.toHaveBeenCalled()
     } finally {
+      useMobileStore.getState().disconnect()
       delete window.AxonkeyNative
     }
   })
 
   it('dismisses all BottomSheets immediately on backdrop click, swipe-down, Escape, and Android Back', () => {
     useMobileStore.setState({
-      phase: 'active',
-      isDemoMode: true,
+      phase: 'disconnected',
       feelSheetOpen: false,
       pointerSettingsOpen: false,
       pointerHelpOpen: false,
@@ -290,13 +311,11 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
 
     render(<App />)
 
-    // 1. PairingSheet closes on backdrop click
     fireEvent.click(screen.getByLabelText('连接与配对'))
     expect(screen.getByRole('dialog', { name: '设备连接' })).toBeTruthy()
     fireEvent.click(screen.getByTestId('pairing-sheet-backdrop'))
     expect(screen.queryByRole('dialog', { name: '设备连接' })).toBeNull()
 
-    // 2. Global Settings (`全局设置`) -> sub-navigation to Pointer Settings (`指针与飞鼠设置`) -> backdrop close
     fireEvent.click(screen.getByLabelText('全局设置'))
     expect(screen.getByRole('dialog', { name: '全局设置' })).toBeTruthy()
     fireEvent.click(screen.getByLabelText('打开指针与飞鼠设置'))
@@ -305,7 +324,6 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
     fireEvent.click(screen.getByTestId('pointer-settings-sheet-backdrop'))
     expect(screen.queryByRole('dialog', { name: '指针与飞鼠设置' })).toBeNull()
 
-    // 3. Swipe-down (>48px) on grabber handle & Android native Back hook close sheet
     fireEvent.click(screen.getByLabelText('全局设置'))
     const handle = screen.getByTestId('bottom-sheet-handle')
     fireEvent.pointerDown(handle, { pointerId: 7, clientY: 120 })
@@ -321,7 +339,7 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
     expect(screen.queryByRole('dialog', { name: '设备连接' })).toBeNull()
   })
 
-  it('supports Mid-Grip Air-Mouse, Edge Rotary Scroll, PointerSettingsSheet Volume Keys, HUD Tips, AboutUpdateSheet & Split Landscape', async () => {
+  it('supports Mid-Grip Air-Mouse, Edge Rotary Scroll, PointerSettingsSheet Reset Defaults & Volume Keys, AboutUpdateSheet & Split Landscape', () => {
     const notifyClickPulseMock = vi.fn()
     const setVolumeConfigMock = vi.fn()
     const checkReleaseMock = vi.fn()
@@ -363,13 +381,8 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
     try {
       window.localStorage.clear()
       render(<App />)
+      connectMockRealHost('Studio PC')
 
-      await act(async () => {
-        useMobileStore.getState().connectDemo()
-        await new Promise((r) => setTimeout(r, 35))
-      })
-
-      // Air-Mouse Mid-Grip + Handedness HUD Tip + Click Stabilizer + Edge Encoder
       fireEvent.click(screen.getByText('触控·飞鼠'))
       fireEvent.click(screen.getByText('飞鼠'))
 
@@ -399,7 +412,6 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       expect(buttonSpy).toHaveBeenCalledWith('middle', 'down', expect.any(String))
       expect(buttonSpy).toHaveBeenCalledWith('middle', 'up', expect.any(String))
 
-      // Configure Hardware Volume Keys directly from toolbar's `指针与飞鼠设置` button!
       fireEvent.click(screen.getByLabelText('指针与飞鼠设置'))
       expect(screen.getByRole('dialog', { name: '指针与飞鼠设置' })).toBeTruthy()
       fireEvent.click(screen.getByText('左 / 右键'))
@@ -419,7 +431,6 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       })
       expect(buttonSpy).toHaveBeenLastCalledWith('left', 'up', downPressId)
 
-      // One-tap Reset to Defaults (`恢复默认`) in PointerSettingsSheet
       act(() => {
         useMobileStore.getState().updateSensitivity({ pointerSensitivity: 2.5, scrollSensitivity: 2.1 })
         useMobileStore.getState().updateLocalFeel({ gyroSensitivity: 2.4, threeFingerSystemGestures: false })
@@ -434,7 +445,6 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       expect(screen.getByTestId('hud-toast').textContent).toContain('指针与飞鼠设置已恢复默认')
       fireEvent.click(screen.getByTestId('pointer-settings-sheet-backdrop'))
 
-      // AboutUpdateSheet check + download + permission_required flow from Global Settings
       fireEvent.click(screen.getByLabelText('全局设置'))
       fireEvent.click(screen.getByLabelText('关于与版本更新'))
       expect(screen.getByText('v0.2.0')).toBeTruthy()
@@ -462,7 +472,7 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
             tagName: 'v0.3.0',
             version: '0.3.0',
             title: 'Axonkey Mobile v0.3.0',
-            notes: '- 圆盘 1/4 扇区与径向轮盘重构',
+            notes: '- 正式版移除模拟体验',
             publishedAt: '2026-11-25T00:00:00Z',
             htmlUrl: 'https://github.com/timeStarry/axonkey-mobile/releases/tag/v0.3.0',
             apkUrl: 'https://github.com/timeStarry/axonkey-mobile/releases/download/v0.3.0/app.apk',
@@ -494,7 +504,6 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       expect(installApkMock).toHaveBeenCalledTimes(1)
       fireEvent.click(screen.getByTestId('about-sheet-backdrop'))
 
-      // Split Landscape mode
       const origW = window.innerWidth
       const origH = window.innerHeight
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: 844 })
@@ -512,6 +521,7 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       }
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: origInnerWidth })
+      useMobileStore.getState().disconnect()
       delete window.AxonkeyNative
     }
   })

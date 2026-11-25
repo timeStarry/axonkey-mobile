@@ -33,7 +33,7 @@ import {
 } from './input/bentoLayout'
 import type { DeckZoneKind, MobileDeckPage } from './protocol/types'
 import { useMobileStore, type WorkspaceMode } from './state/useMobileStore'
-import { DEFAULT_DEMO_DECK } from './transport/defaultDeck'
+import { DEFAULT_MOBILE_DECK } from './transport/defaultDeck'
 import { triggerHaptic } from './transport/nativeBridge'
 
 function readViewportSize(): { width: number; height: number } {
@@ -68,7 +68,6 @@ function getZoneDisplayName(kind: DeckZoneKind): string {
 export function App() {
   const init = useMobileStore((s) => s.init)
   const phase = useMobileStore((s) => s.phase)
-  const isDemoMode = useMobileStore((s) => s.isDemoMode)
   const hostName = useMobileStore((s) => s.hostName)
   const discoveringLan = useMobileStore((s) => s.discoveringLan)
   const context = useMobileStore((s) => s.context)
@@ -76,7 +75,6 @@ export function App() {
   const workspaceMode = useMobileStore((s) => s.workspaceMode)
   const layoutEditing = useMobileStore((s) => s.layoutEditing)
   const selectedEditItem = useMobileStore((s) => s.selectedEditItem)
-  const effectiveTheme = useMobileStore((s) => s.effectiveTheme)
   const screenOrientation = useMobileStore((s) => s.localFeel.screenOrientation)
   const conflictBanner = useMobileStore((s) => s.conflictBanner)
   const errorToast = useMobileStore((s) => s.errorToast)
@@ -100,7 +98,6 @@ export function App() {
   const dismissConflict = useMobileStore((s) => s.dismissConflict)
   const clearError = useMobileStore((s) => s.clearError)
 
-  const isLight = effectiveTheme === 'light'
   const [viewport, setViewport] = useState(readViewportSize)
   const [addComponentOpen, setAddComponentOpen] = useState(false)
 
@@ -137,7 +134,7 @@ export function App() {
     remotePages.find((p) => p.id === deck.activePageId) ??
     remotePages[0] ??
     deck.pages[0] ??
-    DEFAULT_DEMO_DECK.pages[0]
+    DEFAULT_MOBILE_DECK.pages[0]
 
   const gridPages = deck.pages.filter((p) => p.layout !== 'remote' && p.id !== 'classic-remote')
   const deckSelectablePages = gridPages.length > 0 ? gridPages : deck.pages
@@ -148,9 +145,9 @@ export function App() {
     deck.pages.find((p) => p.id === deck.activePageId) ??
     (workspaceMode === 'remote' ? remotePage : activeDeckPage) ??
     deck.pages[0] ??
-    DEFAULT_DEMO_DECK.pages[0]
+    DEFAULT_MOBILE_DECK.pages[0]
 
-  const isOnlineReal = phase === 'active' && !isDemoMode
+  const isOnlineReal = phase === 'active'
   const isConnecting = phase === 'authenticating' || phase === 'synchronizing' || discoveringLan
   const contextBadge = context.appName
     ? context.appName
@@ -832,23 +829,11 @@ export function App() {
       <span
         className={clsx(
           'w-2 h-2 rounded-full shrink-0',
-          phase === 'active'
-            ? isOnlineReal
-              ? 'ak-live-dot'
-              : isLight
-                ? 'bg-black/35'
-                : 'bg-white/40'
-            : 'bg-amber-500 animate-pulse',
+          isOnlineReal ? 'ak-live-dot' : 'bg-amber-500 animate-pulse',
         )}
       />
-      <span className="ak-text-1 text-[13px] font-medium tracking-tight truncate max-w-[136px]">
-        {phase === 'active'
-          ? isDemoMode
-            ? '模拟体验'
-            : hostName
-          : isConnecting
-            ? '重连中…'
-            : '未连接'}
+      <span className="ak-text-1 text-[13px] font-medium tracking-tight truncate max-w-[144px]">
+        {isOnlineReal ? hostName : isConnecting ? '重连中…' : '未连接 · 点此配对'}
       </span>
       {isOnlineReal && contextBadge && (
         <span className="ak-text-2 text-xs inline-flex items-center gap-1 min-w-0 max-w-[104px]">

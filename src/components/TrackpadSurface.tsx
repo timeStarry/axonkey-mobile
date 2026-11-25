@@ -42,7 +42,6 @@ function nextManualPressId(button: PointerButtonName): string {
 export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
   const getClient = useMobileStore((s) => s.getClient)
   const phase = useMobileStore((s) => s.phase)
-  const isDemoMode = useMobileStore((s) => s.isDemoMode)
   const pointerTab = useMobileStore((s) => s.pointerTab)
   const setPointerTab = useMobileStore((s) => s.setPointerTab)
   const airMouseFeel = useMobileStore((s) => s.airMouseFeel)
@@ -113,7 +112,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
   }, [threeFingerSystemGestures])
 
   useEffect(() => {
-    const canStreamNativeGyro = phase === 'active' && !isDemoMode
+    const canStreamNativeGyro = phase === 'active'
     if (!canStreamNativeGyro || pointerTab === 'trackpad') {
       setNativeGyroClutch(false)
       setNativeGyroConfig('off', gyroSensitivity)
@@ -133,7 +132,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
       setNativeGyroConfig('absolute', gyroSensitivity)
       setNativeGyroClutch(true)
     }
-  }, [phase, isDemoMode, pointerTab, airMouseFeel, gyroSensitivity, laserPaused])
+    }, [phase, pointerTab, airMouseFeel, gyroSensitivity, laserPaused])
 
   useEffect(() => {
     const ctrl = controllerRef.current
@@ -293,7 +292,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
     clearGyroGuard()
     if (pointerTab === 'airmouse' && airMouseFeel === 'laser') {
       setLaserPaused(false)
-      if (phase === 'active' && !isDemoMode) {
+      if (phase === 'active') {
         setNativeGyroConfig('absolute', gyroSensitivity)
         setNativeGyroClutch(true)
       }
@@ -582,7 +581,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
                   e.currentTarget.setPointerCapture?.(e.pointerId)
                   setClutchHeld(true)
                   triggerHaptic('tap')
-                  if (phase === 'active' && !isDemoMode) {
+                  if (phase === 'active') {
                     setNativeGyroConfig('relative', gyroSensitivity)
                     setNativeGyroClutch(true)
                   }

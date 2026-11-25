@@ -10,7 +10,7 @@ import {
   reorderTileIds,
 } from '../src/input/bentoLayout'
 import type { MobileDeckPage, MobileTile } from '../src/protocol/types'
-import { DEFAULT_DEMO_DECK } from '../src/transport/defaultDeck'
+import { DEFAULT_MOBILE_DECK } from '../src/transport/defaultDeck'
 
 function makeTile(
   id: string,
@@ -84,7 +84,7 @@ describe('bentoLayout — Plan B Circular Clickpad Ring, Corner Rescue & Dense P
   })
 
   it('normalizes Plan B Classic Remote (5-slot Circular Clickpad Ring) & legacy zone-less remote pages', () => {
-    const classicRemote = DEFAULT_DEMO_DECK.pages[0]
+    const classicRemote = DEFAULT_MOBILE_DECK.pages[0]
     const remoteZones = normalizePageZones(classicRemote)
 
     expect(remoteZones).toHaveLength(3)

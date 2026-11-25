@@ -51,7 +51,6 @@ describe('useMobileStore (LAN Auto-Discovery, Live Telemetry & Contextual Edit S
     const saved = saveHostProfile(staleHost)
     useMobileStore.setState({
       savedHosts: saved,
-      isDemoMode: false,
       phase: 'disconnected',
       hostId: null,
       connectingHostAddr: null,

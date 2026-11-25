@@ -1,6 +1,6 @@
 import type { DeckSnapshot } from '../protocol/types'
 
-export const DEFAULT_DEMO_DECK: DeckSnapshot = {
+export const DEFAULT_MOBILE_DECK: DeckSnapshot = {
   version: 1,
   activePageId: 'classic-remote',
   trackpadSplit: 0,

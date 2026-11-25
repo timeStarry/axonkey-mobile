@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MobileSessionClient, type TransportAdapter } from '../src/transport/sessionClient'
-import { DEFAULT_DEMO_DECK } from '../src/transport/defaultDeck'
+import { DEFAULT_MOBILE_DECK } from '../src/transport/defaultDeck'
 import type { AxonkeyAndroidBridge } from '../src/transport/nativeBridge'
 import type { ClientMessage, ServerMessage } from '../src/protocol/types'
 
@@ -84,7 +84,7 @@ describe('MobileSessionClient', () => {
         audioPcm16: true,
         platform: 'windows',
       },
-      deckSnapshot: DEFAULT_DEMO_DECK,
+      deckSnapshot: DEFAULT_MOBILE_DECK,
       deckRevision: 1,
       context: { appId: 'cursor.exe', appName: 'Cursor', profileName: 'Default' },
       contextRevision: 1,
@@ -202,7 +202,7 @@ describe('MobileSessionClient', () => {
         audioPcm16: true,
         platform: 'windows',
       },
-      deckSnapshot: DEFAULT_DEMO_DECK,
+      deckSnapshot: DEFAULT_MOBILE_DECK,
       deckRevision: 1,
       context: { appId: null, appName: null, profileName: 'Default' },
       contextRevision: 1,
@@ -225,7 +225,7 @@ describe('MobileSessionClient', () => {
     // Deck snapshot push updates epoch/generation and syncs native auth
     transport.receive({
       type: 'deck.snapshot',
-      deckSnapshot: { ...DEFAULT_DEMO_DECK, voiceBindingSummary: 'Win+H' },
+      deckSnapshot: { ...DEFAULT_MOBILE_DECK, voiceBindingSummary: 'Win+H' },
       deckRevision: 2,
       inputEpoch: 3,
       inputGeneration: 16,
@@ -276,7 +276,7 @@ describe('MobileSessionClient', () => {
         audioPcm16: true,
         platform: 'windows',
       },
-      deckSnapshot: DEFAULT_DEMO_DECK,
+      deckSnapshot: DEFAULT_MOBILE_DECK,
       deckRevision: 1,
       context: { appId: null, appName: null, profileName: 'Default' },
       contextRevision: 1,
@@ -342,7 +342,7 @@ describe('MobileSessionClient', () => {
         audioPcm16: true,
         platform: 'windows',
       },
-      deckSnapshot: DEFAULT_DEMO_DECK,
+      deckSnapshot: DEFAULT_MOBILE_DECK,
       deckRevision: 5,
       context: { appId: null, appName: null, profileName: 'Default' },
       contextRevision: 1,
@@ -363,7 +363,7 @@ describe('MobileSessionClient', () => {
       requestId: req1!,
       ok: true,
       deckRevision: 6,
-      deckSnapshot: { ...DEFAULT_DEMO_DECK, pointerSensitivity: 1.8 },
+      deckSnapshot: { ...DEFAULT_MOBILE_DECK, pointerSensitivity: 1.8 },
     })
 
     const deckMsgsAfterAck = transport.sent.filter((m) => m.type === 'deck.update')

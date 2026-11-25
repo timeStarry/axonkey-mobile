@@ -7,7 +7,7 @@ import {
   type PointerTabMode,
   type VolumeKeyMouseMode,
 } from '../state/useMobileStore'
-import { DEFAULT_DEMO_DECK } from '../transport/defaultDeck'
+import { DEFAULT_MOBILE_DECK } from '../transport/defaultDeck'
 import { DEFAULT_LOCAL_FEEL, triggerHaptic } from '../transport/nativeBridge'
 
 export function PointerSettingsSheet() {
@@ -24,8 +24,8 @@ export function PointerSettingsSheet() {
   const isLight = effectiveTheme === 'light'
 
   const isAtDefault =
-    Math.abs(deck.pointerSensitivity - DEFAULT_DEMO_DECK.pointerSensitivity) < 0.01 &&
-    Math.abs(deck.scrollSensitivity - DEFAULT_DEMO_DECK.scrollSensitivity) < 0.01 &&
+    Math.abs(deck.pointerSensitivity - DEFAULT_MOBILE_DECK.pointerSensitivity) < 0.01 &&
+    Math.abs(deck.scrollSensitivity - DEFAULT_MOBILE_DECK.scrollSensitivity) < 0.01 &&
     Math.abs(localFeel.gyroSensitivity - DEFAULT_LOCAL_FEEL.gyroSensitivity) < 0.01 &&
     localFeel.volumeKeyMouseMode === DEFAULT_LOCAL_FEEL.volumeKeyMouseMode &&
     localFeel.preferredPointerTab === DEFAULT_LOCAL_FEEL.preferredPointerTab &&

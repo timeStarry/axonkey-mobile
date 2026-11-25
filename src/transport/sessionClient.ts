@@ -14,7 +14,6 @@ import {
   type TextCommitMode,
   type TileGestureKind,
 } from '../protocol/types'
-import { DEFAULT_DEMO_DECK } from './defaultDeck'
 import {
   cancelNativeVoiceStream,
   clearNativeSessionAuth,
@@ -124,164 +123,6 @@ export class NativeWssTransport implements TransportAdapter {
     }
     this.fallbackWs?.close(1000, reason)
     this.fallbackWs = null
-  }
-}
-
-/** Local loopback simulator so Mobile UI can be tested end-to-end without a live desktop host. */
-export class DemoLoopbackTransport implements TransportAdapter {
-  readonly usesNativeArbiter = false
-  private onMessage: ((raw: string) => void) | null = null
-  private onClose: ((code: number, reason: string) => void) | null = null
-  private tickTimer: ReturnType<typeof setInterval> | null = null
-  private deck: DeckSnapshot = structuredClone(DEFAULT_DEMO_DECK)
-  private deckRev = 1
-  private ctxRev = 1
-  private leaseId = 1
-  private inputGeneration = 1
-  private sessionId = 'demo-session-1'
-
-  connect(handlers: {
-    onOpen: () => void
-    onMessage: (raw: string) => void
-    onClose: (code: number, reason: string) => void
-    onError: (message: string) => void
-  }): void {
-    this.onMessage = handlers.onMessage
-    this.onClose = handlers.onClose
-    setTimeout(() => handlers.onOpen(), 20)
-  }
-
-  send(raw: string): boolean {
-    const msg = JSON.parse(raw) as ClientMessage
-    if (msg.type === 'client.auth') {
-      this.leaseId = 1
-      this.emit({
-        type: 'server.ready',
-        sessionId: this.sessionId,
-        inputEpoch: 1,
-        inputGeneration: this.inputGeneration,
-        leaseId: this.leaseId,
-        leaseTtlMs: 750,
-        tickIntervalMs: 250,
-        hostId: 'demo-desktop',
-        hostName: 'Demo Desktop (模拟)',
-        capabilities: {
-          relativePointer: true,
-          absolutePointer: true,
-          binaryPointerV1: true,
-          binaryAudioV1: true,
-          textCommit: true,
-          audioPcm16: true,
-          udpDiscoveryPort: 49671,
-          platform: 'windows',
-        },
-        deckSnapshot: structuredClone(this.deck),
-        deckRevision: this.deckRev,
-        context: {
-          appId: 'cursor.exe',
-          appName: 'Cursor',
-          profileName: 'Vibe Coding',
-        },
-        contextRevision: this.ctxRev,
-      })
-      this.tickTimer = setInterval(() => {
-        this.leaseId += 1
-        this.emit({
-          type: 'server.tick',
-          sessionId: this.sessionId,
-          inputEpoch: 1,
-          inputGeneration: this.inputGeneration,
-          leaseId: this.leaseId,
-          leaseTtlMs: 750,
-        })
-      }, 250)
-      return true
-    }
-    if (
-      msg.type === 'tile.activate' ||
-      msg.type === 'tile.hold.begin' ||
-      msg.type === 'tile.hold.end' ||
-      msg.type === 'pointer.button' ||
-      msg.type === 'text.commit' ||
-      msg.type === 'voice.begin' ||
-      msg.type === 'voice.end'
-    ) {
-      this.emit({ type: 'command.result', requestId: msg.requestId, ok: true })
-      return true
-    }
-    if (msg.type === 'deck.update') {
-      if (msg.baseRevision !== this.deckRev) {
-        this.emit({
-          type: 'deck.update.result',
-          requestId: msg.requestId,
-          ok: false,
-          conflict: true,
-          deckRevision: this.deckRev,
-          deckSnapshot: structuredClone(this.deck),
-          error: '版本冲突',
-        })
-      } else {
-        const prevSummaries = new Map<string, string>()
-        for (const p of this.deck.pages) {
-          for (const t of p.tiles) {
-            if (t.actionSummary) prevSummaries.set(t.id, t.actionSummary)
-          }
-        }
-        const nextPages = msg.layoutPatch.pages
-          ? structuredClone(msg.layoutPatch.pages).map((page) => ({
-              ...page,
-              tiles: page.tiles.map((tile) => ({
-                ...tile,
-                colSpan: (tile.colSpan >= 2 ? 2 : 1) as 1 | 2,
-                rowSpan: (tile.rowSpan && tile.rowSpan >= 2 ? 2 : 1) as 1 | 2,
-                actionSummary: tile.actionSummary ?? prevSummaries.get(tile.id),
-              })),
-            }))
-          : this.deck.pages
-        const requestedActive = msg.layoutPatch.activePageId ?? this.deck.activePageId
-        const validActivePageId = nextPages.some((p) => p.id === requestedActive)
-          ? requestedActive
-          : (nextPages[0]?.id ?? this.deck.activePageId)
-
-        this.deck = {
-          ...this.deck,
-          activePageId: validActivePageId,
-          ...(msg.layoutPatch.trackpadSplit !== undefined
-            ? { trackpadSplit: msg.layoutPatch.trackpadSplit }
-            : {}),
-          ...(msg.layoutPatch.pointerSensitivity !== undefined
-            ? { pointerSensitivity: msg.layoutPatch.pointerSensitivity }
-            : {}),
-          ...(msg.layoutPatch.scrollSensitivity !== undefined
-            ? { scrollSensitivity: msg.layoutPatch.scrollSensitivity }
-            : {}),
-          pages: nextPages,
-        }
-        this.deckRev += 1
-        this.emit({
-          type: 'deck.update.result',
-          requestId: msg.requestId,
-          ok: true,
-          conflict: false,
-          deckRevision: this.deckRev,
-          deckSnapshot: structuredClone(this.deck),
-        })
-      }
-      return true
-    }
-    return true
-  }
-
-  close(reason = 'closed'): void {
-    if (this.tickTimer) {
-      clearInterval(this.tickTimer)
-      this.tickTimer = null
-    }
-    this.onClose?.(1000, reason)
-  }
-
-  private emit(msg: ServerMessage): void {
-    this.onMessage?.(JSON.stringify(msg))
   }
 }
 
@@ -628,7 +469,7 @@ export class MobileSessionClient {
       return false
     }
 
-    // Path B: Protocol v2 JSON voice.begin (Demo Mode / Browser / Vitest)
+    // Path B: Protocol v2 JSON voice.begin (Browser / Non-Native Fallback)
     if (this.capabilities?.binaryAudioV1) {
       const streamId = ++this.localVoiceCounter
       const ok = this.sendSequenced({

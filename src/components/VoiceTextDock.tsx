@@ -19,7 +19,6 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
   const sendText = useMobileStore((s) => s.sendText)
   const getClient = useMobileStore((s) => s.getClient)
   const phase = useMobileStore((s) => s.phase)
-  const isDemoMode = useMobileStore((s) => s.isDemoMode)
   const voiceLevel = useMobileStore((s) => s.voiceLevel)
   const delivery = useMobileStore((s) => s.textDelivery)
 
@@ -57,7 +56,7 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
   }, [])
 
   useEffect(() => {
-    if (!recording || (!isDemoMode && isNativeShell())) return
+    if (!recording || isNativeShell()) return
     let tick = 0
     const timer = setInterval(() => {
       tick += 1
@@ -66,10 +65,11 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
       setSimLevel(Math.min(1, v))
     }, 65)
     return () => clearInterval(timer)
-  }, [recording, isDemoMode])
+  }, [recording])
 
-  const effectiveLevel =
-    !isDemoMode && isNativeShell() ? Math.max(0.08, voiceLevel) : Math.max(0.12, simLevel)
+  const effectiveLevel = isNativeShell()
+    ? Math.max(0.08, voiceLevel)
+    : Math.max(0.12, simLevel)
 
   const handleSendText = (submit: boolean) => {
     if (sendDisabled) return

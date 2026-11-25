@@ -28,7 +28,7 @@ import {
   normalizePageZones,
   type PageTemplateId,
 } from '../input/bentoLayout'
-import { DEFAULT_DEMO_DECK } from '../transport/defaultDeck'
+import { DEFAULT_MOBILE_DECK } from '../transport/defaultDeck'
 import {
   applyEffectiveThemeToDocument,
   DEFAULT_LOCAL_FEEL,
@@ -61,7 +61,6 @@ import {
   type VolumeKeyMouseMode,
 } from '../transport/nativeBridge'
 import {
-  DemoLoopbackTransport,
   MobileSessionClient,
   NativeWssTransport,
 } from '../transport/sessionClient'
@@ -114,7 +113,6 @@ interface MobileStoreState {
   hostName: string
   hostId: string | null
   connectingHostAddr: string | null
-  isDemoMode: boolean
   capabilities: HostCapabilities | null
   deck: DeckSnapshot
   deckRevision: number
@@ -151,7 +149,6 @@ interface MobileStoreState {
   textDelivery: TextDeliveryBanner | null
 
   init: () => void
-  connectDemo: () => void
   connectSavedHost: (host: SavedHostProfile) => void
   pairFromOffer: (offer: PairingOfferQr) => void
   discoverAndReconnect: (timeoutMs?: number) => void
@@ -363,9 +360,8 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     hostName: '未连接',
     hostId: null,
     connectingHostAddr: null,
-    isDemoMode: false,
     capabilities: null,
-    deck: structuredClone(DEFAULT_DEMO_DECK),
+    deck: structuredClone(DEFAULT_MOBILE_DECK),
     deckRevision: 1,
     context: { appId: null, appName: null, profileName: '默认配置' },
     contextRevision: 1,
@@ -535,7 +531,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
           client.handleVisibilityVisible()
           syncVolumeKeyCaptureWithStore(get())
           const s = get()
-          if (!s.isDemoMode && s.savedHosts.length > 0 && s.phase !== 'active') {
+          if (s.savedHosts.length > 0 && s.phase !== 'active') {
             discoverNativeLanHosts(600)
           }
         }
@@ -586,35 +582,8 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
       if (hosts.length > 0) {
         get().connectSavedHost(hosts[0])
-        discoverNativeLanHosts(600)
-      } else {
-        get().connectDemo()
-        discoverNativeLanHosts(600)
       }
-    },
-
-    connectDemo: () => {
-      const client = ensureClient()
-      setNativeGyroClutch(false)
-      setNativeGyroConfig('off', get().localFeel.gyroSensitivity)
-      set({
-        isDemoMode: true,
-        connectingHostAddr: 'demo',
-        errorToast: null,
-        voiceLevel: 0,
-      })
-      client.connectToHost(
-        {
-          hostId: 'demo-desktop',
-          hostName: 'Demo Desktop',
-          addrs: ['demo'],
-          caCertDerB64: '',
-          peerId: 'demo-peer',
-          peerToken: 'demo-token',
-          lastConnectedAt: Date.now(),
-        },
-        () => new DemoLoopbackTransport(),
-      )
+      discoverNativeLanHosts(600)
     },
 
     connectSavedHost: (host) => {
@@ -626,7 +595,6 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       const nextSaved = saveHostProfile(refreshed)
       set({
         savedHosts: nextSaved,
-        isDemoMode: false,
         hostId: refreshed.hostId,
         hostName: refreshed.hostName,
         connectingHostAddr: refreshed.addrs[0] ?? null,
@@ -638,7 +606,6 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     pairFromOffer: (offer) => {
       const client = ensureClient()
       set({
-        isDemoMode: false,
         hostId: offer.hostId,
         hostName: offer.hostName,
         connectingHostAddr: offer.addrs[0] ?? null,
@@ -653,7 +620,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     },
 
     discoverAndReconnect: (timeoutMs = 600) => {
-      const { savedHosts, phase, isDemoMode } = get()
+      const { savedHosts, phase } = get()
       if (discoveryResetTimer) clearTimeout(discoveryResetTimer)
       const startedNative = discoverNativeLanHosts(timeoutMs)
       if (startedNative) {
@@ -663,7 +630,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
           discoveryResetTimer = null
         }, timeoutMs + 200)
       }
-      if (savedHosts.length > 0 && (phase !== 'active' || isDemoMode)) {
+      if (savedHosts.length > 0 && phase !== 'active') {
         get().connectSavedHost(savedHosts[0])
       }
     },
@@ -700,7 +667,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
       if (!bestMatch) return
       const state = get()
-      if (state.isDemoMode || state.phase === 'active') return
+      if (state.phase === 'active') return
 
       const newPrimary = bestMatch.updated.addrs[0]
       const addrChanged =
@@ -728,7 +695,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       setNativeGyroClutch(false)
       setNativeGyroConfig('off', get().localFeel.gyroSensitivity)
       ensureClient().disconnect('user_disconnect')
-      set({ isDemoMode: false, connectingHostAddr: null, voiceLevel: 0 })
+      set({ connectingHostAddr: null, voiceLevel: 0 })
     },
 
     setWorkspaceMode: (mode) => {
@@ -1265,8 +1232,8 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
         threeFingerSystemGestures: DEFAULT_LOCAL_FEEL.threeFingerSystemGestures,
       })
       get().updateSensitivity({
-        pointerSensitivity: DEFAULT_DEMO_DECK.pointerSensitivity,
-        scrollSensitivity: DEFAULT_DEMO_DECK.scrollSensitivity,
+        pointerSensitivity: DEFAULT_MOBILE_DECK.pointerSensitivity,
+        scrollSensitivity: DEFAULT_MOBILE_DECK.scrollSensitivity,
       })
     },
 
