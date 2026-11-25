@@ -687,23 +687,27 @@ export function installDownloadedNativeApk(): boolean {
 }
 
 export function compareSemver(currentVer: string, latestVer: string): number {
-  const norm = (v: string) =>
-    v
-      .trim()
-      .replace(/^v/i, '')
-      .split('-')[0]
-      .split('.')
-      .map((part) => Number.parseInt(part, 10) || 0)
-  const a = norm(currentVer)
-  const b = norm(latestVer)
-  const len = Math.max(a.length, b.length, 3)
+  const parse = (v: string): { nums: number[]; pre: string | null } => {
+    const cleaned = v.trim().replace(/^v/i, '').split('+')[0] ?? ''
+    const dashIdx = cleaned.indexOf('-')
+    const core = dashIdx >= 0 ? cleaned.slice(0, dashIdx) : cleaned
+    const pre = dashIdx >= 0 ? cleaned.slice(dashIdx + 1).trim() || null : null
+    const nums = core.split('.').map((part) => Number.parseInt(part, 10) || 0)
+    return { nums, pre }
+  }
+  const a = parse(currentVer)
+  const b = parse(latestVer)
+  const len = Math.max(a.nums.length, b.nums.length, 3)
   for (let i = 0; i < len; i += 1) {
-    const ai = a[i] ?? 0
-    const bi = b[i] ?? 0
+    const ai = a.nums[i] ?? 0
+    const bi = b.nums[i] ?? 0
     if (ai < bi) return -1
     if (ai > bi) return 1
   }
-  return 0
+  if (a.pre === null && b.pre === null) return 0
+  if (a.pre !== null && b.pre === null) return -1
+  if (a.pre === null && b.pre !== null) return 1
+  return a.pre!.localeCompare(b.pre!)
 }
 
 export function startNativeVoiceStream(requestId: string): number {

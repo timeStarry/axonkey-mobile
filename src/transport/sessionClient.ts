@@ -13,7 +13,13 @@ import {
   type SystemTouchpadGesture,
   type TextCommitMode,
   type TileGestureKind,
+  type VersionCompatibilityNotice,
 } from '../protocol/types'
+import {
+  buildClientVersionHandshake,
+  evaluateHostCapabilitiesCompatibility,
+  normalizeServerErrorCompatibilityNotice,
+} from '../protocol/versionCompat'
 import {
   cancelNativeVoiceStream,
   clearNativeSessionAuth,
@@ -66,6 +72,7 @@ export interface SessionListener {
     status: 'sent' | 'ok' | 'error' | 'unknown',
     message?: string,
   ) => void
+  onVersionNotice?: (notice: VersionCompatibilityNotice | null) => void
   onError?: (message: string) => void
 }
 
@@ -218,6 +225,7 @@ export class MobileSessionClient {
         type: 'pair.request',
         pairToken: offer.pairToken,
         deviceName: this.deviceName,
+        ...buildClientVersionHandshake(),
       })
     })
   }
@@ -623,6 +631,7 @@ export class MobileSessionClient {
         peerId: host.peerId,
         peerToken: host.peerToken,
         deviceName: this.deviceName,
+        ...buildClientVersionHandshake(),
       })
     })
   }
@@ -670,7 +679,12 @@ export class MobileSessionClient {
             peerId: profile.peerId,
             peerToken: profile.peerToken,
             deviceName: this.deviceName,
+            ...buildClientVersionHandshake(),
           })
+        } else if (msg.versionNotice) {
+          this.allowAutoReconnect = false
+          this.disconnect('pair_version_incompatible')
+          this.listener.onVersionNotice?.(msg.versionNotice)
         } else {
           this.listener.onError?.(msg.error ?? '配对失败')
           this.disconnect('pair_failed')
@@ -678,6 +692,16 @@ export class MobileSessionClient {
         break
       }
       case 'server.ready': {
+        const compat = evaluateHostCapabilitiesCompatibility({
+          hostName: msg.hostName,
+          capabilities: msg.capabilities,
+        })
+        if (compat?.severity === 'hard') {
+          this.allowAutoReconnect = false
+          this.disconnect('version_incompatible')
+          this.listener.onVersionNotice?.(compat)
+          break
+        }
         this.sessionId = msg.sessionId
         this.inputEpoch = msg.inputEpoch
         this.inputGeneration = msg.inputGeneration ?? 1
@@ -699,6 +723,7 @@ export class MobileSessionClient {
           context: msg.context,
           contextRevision: msg.contextRevision,
         })
+        this.listener.onVersionNotice?.(compat)
         break
       }
       case 'server.tick': {
@@ -782,6 +807,17 @@ export class MobileSessionClient {
         break
       }
       case 'error': {
+        const compat = normalizeServerErrorCompatibilityNotice(
+          msg.code,
+          msg.message,
+          msg.versionNotice,
+        )
+        if (compat) {
+          this.allowAutoReconnect = false
+          this.disconnect('version_incompatible')
+          this.listener.onVersionNotice?.(compat)
+          break
+        }
         this.listener.onError?.(msg.message)
         break
       }

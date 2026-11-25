@@ -22,6 +22,7 @@ import { PointerHelpSheet } from './components/PointerHelpSheet'
 import { PointerSettingsSheet } from './components/PointerSettingsSheet'
 import { TileStyleSheet } from './components/TileStyleSheet'
 import { TrackpadSurface } from './components/TrackpadSurface'
+import { VersionCompatSheet } from './components/VersionCompatSheet'
 import { VoiceTextDock } from './components/VoiceTextDock'
 import {
   BENTO_SPAN_OPTIONS,
@@ -785,6 +786,7 @@ export function App() {
       <TileStyleSheet />
       <PageManagerSheet currentPage={editingCurrentPage} />
       <AboutUpdateSheet />
+      <VersionCompatSheet />
       <BottomSheet
         open={addComponentOpen}
         onClose={() => setAddComponentOpen(false)}

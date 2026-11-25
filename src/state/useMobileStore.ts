@@ -14,7 +14,12 @@ import type {
   PointerButtonName,
   SessionPhase,
   TextCommitMode,
+  VersionCompatibilityNotice,
 } from '../protocol/types'
+import {
+  dismissSoftCompatNotice,
+  isSoftCompatNoticeDismissed,
+} from '../protocol/versionCompat'
 import {
   MAX_TILES_PER_PAGE,
   MAX_ZONES_PER_PAGE,
@@ -145,6 +150,7 @@ interface MobileStoreState {
 
   conflictBanner: string | null
   errorToast: string | null
+  versionCompatNotice: VersionCompatibilityNotice | null
   tileFeedback: Record<string, TileFeedback>
   textDelivery: TextDeliveryBanner | null
 
@@ -177,6 +183,7 @@ interface MobileStoreState {
   clearGyroGuard: () => void
   dismissConflict: () => void
   clearError: () => void
+  dismissVersionCompatNotice: () => void
 
   submitDeckPatch: (patch: DeckLayoutPatch) => void
   updateTile: (pageId: string, tileId: string, patch: Partial<MobileTile>) => void
@@ -235,7 +242,8 @@ function computeShouldCaptureVolumeKeys(state: MobileStoreState): boolean {
     state.pointerHelpOpen ||
     state.pageManagerOpen ||
     Boolean(state.editingTileTarget) ||
-    state.aboutSheetOpen
+    state.aboutSheetOpen ||
+    Boolean(state.versionCompatNotice)
   if (anySheetOpen) return false
 
   const inStandaloneAirMouse =
@@ -345,6 +353,20 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
           if (status === 'error' || status === 'unknown') triggerHaptic('error')
           set({ textDelivery: { status, message } })
         },
+        onVersionNotice: (notice) => {
+          if (!notice) {
+            set({ versionCompatNotice: null })
+            return
+          }
+          if (notice.severity === 'soft' && isSoftCompatNoticeDismissed(notice.key)) {
+            set({ versionCompatNotice: null })
+            return
+          }
+          if (notice.severity === 'hard') {
+            triggerHaptic('error')
+          }
+          set({ versionCompatNotice: notice, pairingOpen: false })
+        },
         onError: (message) => {
           set({ errorToast: message })
         },
@@ -392,6 +414,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
     conflictBanner: null,
     errorToast: null,
+    versionCompatNotice: null,
     tileFeedback: {},
     textDelivery: null,
 
@@ -875,6 +898,13 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
     dismissConflict: () => set({ conflictBanner: null }),
     clearError: () => set({ errorToast: null }),
+    dismissVersionCompatNotice: () => {
+      const cur = get().versionCompatNotice
+      if (cur && cur.severity === 'soft') {
+        dismissSoftCompatNotice(cur.key)
+      }
+      set({ versionCompatNotice: null })
+    },
 
     submitDeckPatch: (patch) => {
       const { deck, deckRevision } = get()

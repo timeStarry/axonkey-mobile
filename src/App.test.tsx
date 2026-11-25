@@ -41,6 +41,10 @@ function connectMockRealHost(hostName = 'Studio PC') {
           audioPcm16: true,
           udpDiscoveryPort: 49671,
           platform: 'windows',
+          hostVersion: '1.9.19',
+          protocolApi: 2,
+          minRequiredClientApi: 1,
+          minRecommendedClientVersion: '0.2.0',
         },
         deckSnapshot: structuredClone(DEFAULT_MOBILE_DECK),
         deckRevision: 1,
@@ -521,6 +525,115 @@ describe('Axonkey Mobile Production UX — Zero Demo Remnants, Same-LAN Guidance
       }
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: origInnerWidth })
+      useMobileStore.getState().disconnect()
+      delete window.AxonkeyNative
+    }
+  })
+
+  it('stays completely silent when compatible, and distinguishes soft drift vs hard incompatibility modals', () => {
+    window.localStorage.clear()
+    window.AxonkeyNative = {
+      haptic: vi.fn(),
+      playClickSound: vi.fn(),
+      setKeepScreenOn: vi.fn(),
+      openQrScanner: vi.fn(),
+      connectWss: vi.fn(),
+      sendWssText: vi.fn(() => true),
+      closeWss: vi.fn(),
+      startAudioCapture: vi.fn(() => true),
+      stopAudioCapture: vi.fn(),
+      saveHostCredentials: vi.fn(),
+      loadHostCredentials: vi.fn(() => ''),
+      deleteHostCredentials: vi.fn(),
+    } as AxonkeyAndroidBridge
+
+    try {
+      render(<App />)
+
+      // 1. Compatible handshake -> zero version notice UI
+      connectMockRealHost('Studio PC')
+      expect(useMobileStore.getState().phase).toBe('active')
+      expect(screen.queryByTestId('version-compat-sheet-backdrop')).toBeNull()
+
+      // 2. Soft version drift -> session stays active, dismissible notice shown once per version pair
+      act(() => {
+        window.__axonkeyNativeOnMessage?.(
+          JSON.stringify({
+            type: 'server.ready',
+            sessionId: 'sess-soft-1',
+            inputEpoch: 2,
+            inputGeneration: 2,
+            leaseId: 2,
+            leaseTtlMs: 60_000,
+            tickIntervalMs: 250,
+            hostId: 'pc-1',
+            hostName: 'Studio PC',
+            capabilities: {
+              relativePointer: true,
+              absolutePointer: true,
+              binaryPointerV1: true,
+              binaryAudioV1: true,
+              textCommit: true,
+              audioPcm16: true,
+              udpDiscoveryPort: 49671,
+              platform: 'windows',
+              hostVersion: '1.12.0',
+              protocolApi: 2,
+              minRequiredClientApi: 1,
+              minRecommendedClientVersion: '0.5.0',
+            },
+            deckSnapshot: structuredClone(DEFAULT_MOBILE_DECK),
+            deckRevision: 1,
+            context: { appId: null, appName: null, profileName: '默认配置' },
+            contextRevision: 1,
+          }),
+        )
+      })
+      expect(useMobileStore.getState().phase).toBe('active')
+      expect(screen.getByTestId('version-compat-sheet-backdrop')).toBeTruthy()
+      expect(screen.getByText('版本跨度较大 · 可能影响体验')).toBeTruthy()
+      fireEvent.click(screen.getByText('继续使用（本版本不再提示）'))
+      expect(screen.queryByTestId('version-compat-sheet-backdrop')).toBeNull()
+
+      // 3. Hard protocol incompatibility -> disconnects session and prompts mandatory update
+      act(() => {
+        window.__axonkeyNativeOnMessage?.(
+          JSON.stringify({
+            type: 'server.ready',
+            sessionId: 'sess-hard-1',
+            inputEpoch: 3,
+            inputGeneration: 3,
+            leaseId: 3,
+            leaseTtlMs: 60_000,
+            tickIntervalMs: 250,
+            hostId: 'pc-1',
+            hostName: 'Future PC',
+            capabilities: {
+              relativePointer: true,
+              absolutePointer: true,
+              binaryPointerV1: true,
+              binaryAudioV1: true,
+              textCommit: true,
+              audioPcm16: true,
+              udpDiscoveryPort: 49671,
+              platform: 'windows',
+              hostVersion: '2.0.0',
+              protocolApi: 3,
+              minRequiredClientApi: 3,
+              minRecommendedClientVersion: '1.0.0',
+            },
+            deckSnapshot: structuredClone(DEFAULT_MOBILE_DECK),
+            deckRevision: 1,
+            context: { appId: null, appName: null, profileName: '默认配置' },
+            contextRevision: 1,
+          }),
+        )
+      })
+      expect(useMobileStore.getState().phase).toBe('disconnected')
+      expect(screen.getByTestId('version-compat-sheet-backdrop')).toBeTruthy()
+      expect(screen.getByText('协议不兼容 · 需更新后连接')).toBeTruthy()
+      fireEvent.click(screen.getByText('知道了'))
+    } finally {
       useMobileStore.getState().disconnect()
       delete window.AxonkeyNative
     }

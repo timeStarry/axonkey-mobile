@@ -43,6 +43,25 @@ export interface HostCapabilities {
   audioPcm16: boolean
   udpDiscoveryPort?: number
   platform: 'windows' | 'macos' | 'linux' | 'unknown'
+  hostVersion?: string
+  protocolApi?: number
+  minRequiredClientApi?: number
+  minRecommendedClientVersion?: string
+}
+
+export type VersionCompatSeverity = 'soft' | 'hard'
+export type VersionCompatTarget = 'mobile' | 'desktop'
+
+export interface VersionCompatibilityNotice {
+  key: string
+  occurrenceId?: number
+  severity: VersionCompatSeverity
+  target: VersionCompatTarget
+  deviceName?: string
+  currentVersion?: string | null
+  expectedVersion: string
+  title: string
+  message: string
 }
 
 export interface ForegroundContext {
@@ -144,12 +163,20 @@ export type ClientMessage =
       type: 'pair.request'
       pairToken: string
       deviceName: string
+      clientVersion?: string
+      protocolApi?: number
+      minRequiredHostApi?: number
+      minRecommendedHostVersion?: string
     }
   | {
       type: 'client.auth'
       peerId: string
       peerToken: string
       deviceName: string
+      clientVersion?: string
+      protocolApi?: number
+      minRequiredHostApi?: number
+      minRecommendedHostVersion?: string
     }
   | {
       type: 'client.alive'
@@ -305,6 +332,7 @@ export type ServerMessage =
       peerId?: string
       peerToken?: string
       error?: string
+      versionNotice?: VersionCompatibilityNotice
     }
   | {
       type: 'server.ready'
@@ -367,4 +395,5 @@ export type ServerMessage =
       type: 'error'
       code: string
       message: string
+      versionNotice?: VersionCompatibilityNotice
     }

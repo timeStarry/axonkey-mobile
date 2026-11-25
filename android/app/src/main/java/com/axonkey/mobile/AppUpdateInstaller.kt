@@ -27,7 +27,6 @@ class AppUpdateInstaller(
 ) {
     companion object {
         private const val DEFAULT_REPO_SLUG = "timeStarry/axonkey-mobile"
-        private const val USER_AGENT = "AxonkeyMobile/0.2.0"
         private const val PROGRESS_THROTTLE_MS = 80L
         private const val MAX_APK_BYTES = 150L * 1024L * 1024L
         private val REPO_SLUG_REGEX = Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -50,7 +49,7 @@ class AppUpdateInstaller(
     @Volatile
     private var pendingApkFile: File? = null
 
-    fun getAppVersionInfoJson(): String {
+    private fun resolveVersionPair(): Pair<String, Long> {
         var versionName = "0.2.0"
         var versionCode = 2L
         try {
@@ -66,7 +65,13 @@ class AppUpdateInstaller(
             }
         } catch (_: Exception) {
         }
+        return versionName to versionCode
+    }
 
+    private fun buildUserAgent(): String = "AxonkeyMobile/${resolveVersionPair().first}"
+
+    fun getAppVersionInfoJson(): String {
+        val (versionName, versionCode) = resolveVersionPair()
         return JSONObject().apply {
             put("versionName", versionName)
             put("versionCode", versionCode)
@@ -88,7 +93,7 @@ class AppUpdateInstaller(
                         .url("https://api.github.com/repos/$cleanSlug/releases/latest")
                         .get()
                         .header("Accept", "application/vnd.github+json")
-                        .header("User-Agent", USER_AGENT)
+                        .header("User-Agent", buildUserAgent())
                         .build()
 
                     httpClient.newCall(req).execute().use { resp ->
@@ -325,7 +330,7 @@ class AppUpdateInstaller(
             .get()
             .header("Accept", "application/octet-stream, */*")
             .header("Cache-Control", "no-cache")
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", buildUserAgent())
             .build()
 
         httpClient.newCall(req).execute().use { resp ->
