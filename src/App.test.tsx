@@ -32,6 +32,9 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       isSystemDarkMode: vi.fn(() => true),
     } satisfies AxonkeyAndroidBridge
 
+    const origInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+
     try {
       window.localStorage.clear()
       render(<App />)
@@ -90,13 +93,24 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       expect(tileActivateSpy).toHaveBeenNthCalledWith(2, 'remote.right', 'tap')
       expect(hapticMock).toHaveBeenCalledWith('detent')
 
-      // 3. Multi-Span Silkscreen (`> 1x1` shows silkscreen, `1x1` stays clean) + Semantic Icon Color
+      // 3. Physical-Geometry Silkscreen:
+      // In 3-col portrait (~362px wide), 2x1 (~238px) shows silkscreen while 1x1 (~114px) hides it;
+      // switching to a 2-col grid makes 1x1 tiles ~176px wide, so 1x1 tiles automatically show silkscreen!
       fireEvent.click(screen.getByText('快捷面板'))
-      // 2x1 `tile.continue` displays silkscreen `粘贴「继续执行…」`, whereas 1x1 `tile.accept` hides `Ctrl+Enter`
-      const silkEls = screen.getAllByTestId('tile-silkscreen')
-      expect(silkEls.length).toBe(1)
-      expect(silkEls[0].textContent).toBe('粘贴「继续执行…」')
+      const silkEls3Col = screen.getAllByTestId('tile-silkscreen')
+      expect(silkEls3Col.length).toBe(1)
+      expect(silkEls3Col[0].textContent).toBe('粘贴「继续执行…」')
       expect(screen.queryByText('Ctrl+Enter')).toBeNull()
+
+      act(() => {
+        const vibePage = useMobileStore
+          .getState()
+          .deck.pages.find((p) => p.id === 'vibe-coding')!
+        useMobileStore.getState().updateZone('vibe-coding', `${vibePage.id}-grid`, { columns: 2 })
+      })
+      // Now in 2-col grid, 1x1 tiles are ~176px wide (>= 144px) -> Ctrl+Enter, Ctrl+Z, Ctrl+C silkscreens appear!
+      expect(screen.getByText('Ctrl+Enter')).toBeTruthy()
+      expect(screen.getByText('Ctrl+Z')).toBeTruthy()
 
       // 4. Touchpad & Air-Mouse: HUD Tips, Gesture Help Info Sheet, Pointer Settings Sheet & NO misleading Volume badge
       fireEvent.click(screen.getByText('触控·飞鼠'))
@@ -154,6 +168,7 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       fireEvent.click(within(globalDialog).getByText('深色'))
       fireEvent.click(within(globalDialog).getByText('跟随系统'))
     } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: origInnerWidth })
       setVoiceRecordingActive(false)
       delete window.AxonkeyNative
     }
@@ -237,13 +252,13 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
 
       fireEvent.pointerMove(wheelSurface, { pointerId: 5, clientX: 142, clientY: 100 }) // Right (slot 3)
       expect(
-        wheelSvg.querySelector('[data-radial-sector="3"]')?.getAttribute('data-radial-active'),
+        wheelSurface.querySelector('[data-radial-sector="3"]')?.getAttribute('data-radial-active'),
       ).toBe('true')
       expect(hapticMock).toHaveBeenCalledWith('detent')
 
       fireEvent.pointerMove(wheelSurface, { pointerId: 5, clientX: 100, clientY: 58 }) // Sweep Up (slot 0)
       expect(
-        wheelSvg.querySelector('[data-radial-sector="0"]')?.getAttribute('data-radial-active'),
+        wheelSurface.querySelector('[data-radial-sector="0"]')?.getAttribute('data-radial-active'),
       ).toBe('true')
 
       fireEvent.pointerUp(wheelSurface, { pointerId: 5, clientX: 100, clientY: 58 })
@@ -342,6 +357,9 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
       setScreenOrientationMode: setOrientationMock,
     } satisfies AxonkeyAndroidBridge
 
+    const origInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+
     try {
       window.localStorage.clear()
       render(<App />)
@@ -400,6 +418,21 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
         window.__axonkeyNativeOnVolumeKey?.('up', 'up')
       })
       expect(buttonSpy).toHaveBeenLastCalledWith('left', 'up', downPressId)
+
+      // One-tap Reset to Defaults (`恢复默认`) in PointerSettingsSheet
+      act(() => {
+        useMobileStore.getState().updateSensitivity({ pointerSensitivity: 2.5, scrollSensitivity: 2.1 })
+        useMobileStore.getState().updateLocalFeel({ gyroSensitivity: 2.4, threeFingerSystemGestures: false })
+      })
+      fireEvent.click(screen.getByLabelText('指针与飞鼠设置'))
+      fireEvent.click(screen.getByLabelText('恢复默认指针设置'))
+      expect(useMobileStore.getState().deck.pointerSensitivity).toBe(1.4)
+      expect(useMobileStore.getState().deck.scrollSensitivity).toBe(1.0)
+      expect(useMobileStore.getState().localFeel.gyroSensitivity).toBe(1.2)
+      expect(useMobileStore.getState().localFeel.volumeKeyMouseMode).toBe('off')
+      expect(useMobileStore.getState().localFeel.threeFingerSystemGestures).toBe(true)
+      expect(screen.getByTestId('hud-toast').textContent).toContain('指针与飞鼠设置已恢复默认')
+      fireEvent.click(screen.getByTestId('pointer-settings-sheet-backdrop'))
 
       // AboutUpdateSheet check + download + permission_required flow from Global Settings
       fireEvent.click(screen.getByLabelText('全局设置'))
@@ -478,6 +511,7 @@ describe('Axonkey Mobile v6 — Harmonious Siri Remote, 1/4 Annular Sector Press
         Object.defineProperty(window, 'innerHeight', { configurable: true, value: origH })
       }
     } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: origInnerWidth })
       delete window.AxonkeyNative
     }
   })

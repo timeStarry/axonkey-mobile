@@ -31,6 +31,7 @@ import {
 import { DEFAULT_DEMO_DECK } from '../transport/defaultDeck'
 import {
   applyEffectiveThemeToDocument,
+  DEFAULT_LOCAL_FEEL,
   discoverNativeLanHosts,
   loadLocalFeelPreferences,
   loadSavedHosts,
@@ -202,6 +203,7 @@ interface MobileStoreState {
   deletePage: (pageId: string) => void
 
   updateSensitivity: (patch: { pointerSensitivity?: number; scrollSensitivity?: number }) => void
+  resetPointerSettings: () => void
   sendText: (text: string, mode: TextCommitMode, submit: boolean) => boolean
   getClient: () => MobileSessionClient
 }
@@ -1251,6 +1253,21 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       }
       set({ deck: nextDeck })
       ensureClient().sendDeckUpdate(deckRevision, patch)
+    },
+
+    resetPointerSettings: () => {
+      get().updateLocalFeel({
+        gyroSensitivity: DEFAULT_LOCAL_FEEL.gyroSensitivity,
+        volumeKeyMouseMode: DEFAULT_LOCAL_FEEL.volumeKeyMouseMode,
+        preferredPointerTab: DEFAULT_LOCAL_FEEL.preferredPointerTab,
+        airMouseFeel: DEFAULT_LOCAL_FEEL.airMouseFeel,
+        airMouseHandedness: DEFAULT_LOCAL_FEEL.airMouseHandedness,
+        threeFingerSystemGestures: DEFAULT_LOCAL_FEEL.threeFingerSystemGestures,
+      })
+      get().updateSensitivity({
+        pointerSensitivity: DEFAULT_DEMO_DECK.pointerSensitivity,
+        scrollSensitivity: DEFAULT_DEMO_DECK.scrollSensitivity,
+      })
     },
 
     sendText: (text, mode, submit) => {

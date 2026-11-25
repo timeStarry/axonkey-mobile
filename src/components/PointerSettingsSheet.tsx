@@ -1,3 +1,4 @@
+import { RotateCcw } from 'lucide-react'
 import { clsx } from 'clsx'
 import { BottomSheet } from './BottomSheet'
 import {
@@ -6,7 +7,8 @@ import {
   type PointerTabMode,
   type VolumeKeyMouseMode,
 } from '../state/useMobileStore'
-import { triggerHaptic } from '../transport/nativeBridge'
+import { DEFAULT_DEMO_DECK } from '../transport/defaultDeck'
+import { DEFAULT_LOCAL_FEEL, triggerHaptic } from '../transport/nativeBridge'
 
 export function PointerSettingsSheet() {
   const open = useMobileStore((s) => s.pointerSettingsOpen)
@@ -16,9 +18,27 @@ export function PointerSettingsSheet() {
   const effectiveTheme = useMobileStore((s) => s.effectiveTheme)
   const updateLocalFeel = useMobileStore((s) => s.updateLocalFeel)
   const updateSensitivity = useMobileStore((s) => s.updateSensitivity)
+  const resetPointerSettings = useMobileStore((s) => s.resetPointerSettings)
   const showHudToast = useMobileStore((s) => s.showHudToast)
 
   const isLight = effectiveTheme === 'light'
+
+  const isAtDefault =
+    Math.abs(deck.pointerSensitivity - DEFAULT_DEMO_DECK.pointerSensitivity) < 0.01 &&
+    Math.abs(deck.scrollSensitivity - DEFAULT_DEMO_DECK.scrollSensitivity) < 0.01 &&
+    Math.abs(localFeel.gyroSensitivity - DEFAULT_LOCAL_FEEL.gyroSensitivity) < 0.01 &&
+    localFeel.volumeKeyMouseMode === DEFAULT_LOCAL_FEEL.volumeKeyMouseMode &&
+    localFeel.preferredPointerTab === DEFAULT_LOCAL_FEEL.preferredPointerTab &&
+    localFeel.airMouseFeel === DEFAULT_LOCAL_FEEL.airMouseFeel &&
+    localFeel.airMouseHandedness === DEFAULT_LOCAL_FEEL.airMouseHandedness &&
+    localFeel.threeFingerSystemGestures === DEFAULT_LOCAL_FEEL.threeFingerSystemGestures
+
+  const handleResetDefaults = () => {
+    if (isAtDefault) return
+    triggerHaptic('confirm')
+    resetPointerSettings()
+    showHudToast('指针与飞鼠设置已恢复默认')
+  }
 
   const volumeKeyOptions: { id: VolumeKeyMouseMode; label: string; tip: string }[] = [
     { id: 'off', label: '关闭', tip: '已关闭飞鼠实体音量键接管' },
@@ -56,6 +76,23 @@ export function PointerSettingsSheet() {
       title="指针与飞鼠设置"
       closeAriaLabel="关闭指针设置"
       testId="pointer-settings-sheet-backdrop"
+      headerRight={
+        <button
+          type="button"
+          disabled={isAtDefault}
+          onClick={handleResetDefaults}
+          aria-label="恢复默认指针设置"
+          className={clsx(
+            'h-7 px-2.5 rounded-full border text-[11px] font-medium inline-flex items-center gap-1 transition-opacity',
+            isAtDefault
+              ? 'ak-pill ak-text-3 opacity-45 cursor-default'
+              : 'ak-elevated ak-text-1 active:scale-95',
+          )}
+        >
+          <RotateCcw className="w-3 h-3" />
+          <span>恢复默认</span>
+        </button>
+      }
     >
       {/* Sensitivity Sliders */}
       <div className="ak-well p-3 rounded-[18px] border space-y-3">
