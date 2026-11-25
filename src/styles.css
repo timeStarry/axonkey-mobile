@@ -339,9 +339,26 @@ input[type="range"].ak-slider::-webkit-slider-thumb {
 }
 
 .safe-top {
-  padding-top: max(env(safe-area-inset-top), 10px);
+  padding-top: max(var(--ak-inset-top, 0px), env(safe-area-inset-top, 0px), 10px);
 }
 
 .safe-bottom {
-  padding-bottom: max(env(safe-area-inset-bottom), 14px);
+  padding-bottom: max(var(--ak-inset-bottom, 0px), env(safe-area-inset-bottom, 0px), 14px);
+}
+
+.safe-landscape-rail {
+  padding-top: max(var(--ak-inset-top, 0px), env(safe-area-inset-top, 0px), 10px);
+  padding-left: max(var(--ak-inset-left, 0px), env(safe-area-inset-left, 0px), 12px);
+  padding-bottom: max(var(--ak-inset-bottom, 0px), env(safe-area-inset-bottom, 0px), 10px);
+  padding-right: 12px;
+}
+
+.safe-landscape-stage {
+  padding-top: max(var(--ak-inset-top, 0px), env(safe-area-inset-top, 0px), 4px);
+  padding-right: max(var(--ak-inset-right, 0px), env(safe-area-inset-right, 0px), 6px);
+  padding-bottom: max(var(--ak-inset-bottom, 0px), env(safe-area-inset-bottom, 0px), 6px);
+}
+
+.safe-landscape-stage-full {
+  padding-left: max(var(--ak-inset-left, 0px), env(safe-area-inset-left, 0px), 6px);
 }

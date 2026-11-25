@@ -854,7 +854,7 @@ export function App() {
         className="ak-canvas h-full w-full flex flex-row overflow-hidden"
       >
         {!layoutEditing && (
-          <aside className="ak-chrome w-[204px] shrink-0 h-full border-r p-3 flex flex-col justify-between gap-2 overflow-y-auto no-scrollbar">
+          <aside className="ak-chrome safe-landscape-rail w-[212px] shrink-0 h-full border-r flex flex-col justify-between gap-2 overflow-y-auto no-scrollbar">
             <div className="space-y-2.5">
               <div className="flex items-center justify-between gap-1">
                 {renderHostStatusPill()}
@@ -911,7 +911,12 @@ export function App() {
           </aside>
         )}
 
-        <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
+        <div
+          className={clsx(
+            'safe-landscape-stage flex-1 min-w-0 h-full flex flex-col overflow-hidden',
+            layoutEditing && 'safe-landscape-stage-full',
+          )}
+        >
           {layoutEditing && renderEditTopBar(true)}
           {renderMainStage(true)}
           {layoutEditing && renderEditInspectorDock()}

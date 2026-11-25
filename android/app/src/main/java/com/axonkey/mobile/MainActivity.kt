@@ -27,7 +27,10 @@ import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewAssetLoader
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -67,6 +70,8 @@ class MainActivity : ComponentActivity() {
     private var volumeCaptureMode: String = "off"
     private var heldVolUp: Boolean = false
     private var heldVolDown: Boolean = false
+    @Volatile
+    private var latestInsetsJs: String = ""
 
     private val webBackCallback = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
@@ -210,23 +215,63 @@ class MainActivity : ComponentActivity() {
                     view: WebView,
                     request: WebResourceRequest
                 ): WebResourceResponse? = assetLoader.shouldInterceptRequest(request.url)
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    val script = latestInsetsJs
+                    if (script.isNotEmpty()) {
+                        emitJs(script)
+                    }
+                }
             }
             addJavascriptInterface(AxonkeyNativeBridge(), "AxonkeyNative")
         }
 
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+
         setContentView(webView)
+        ViewCompat.setOnApplyWindowInsetsListener(webView) { _, windowInsets ->
+            dispatchSafeInsetsToWeb(windowInsets)
+            windowInsets
+        }
         onBackPressedDispatcher.addCallback(this, webBackCallback)
         applyWindowSystemBarTheme(resolveSystemNightMode(resources.configuration))
+        applyOrientationSystemBars(resources.configuration)
         webView.loadUrl("https://appassets.androidplatform.net/assets/web/index.html")
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        applyOrientationSystemBars(newConfig)
+        if (::webView.isInitialized) {
+            ViewCompat.requestApplyInsets(webView)
+        }
         if (::gyroController.isInitialized) {
             gyroController.setDisplayRotation(currentDisplayRotation())
         }
         val isDark = resolveSystemNightMode(newConfig)
         emitJs("window.__axonkeyNativeOnSystemDarkChanged && window.__axonkeyNativeOnSystemDarkChanged($isDark);")
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            applyOrientationSystemBars(resources.configuration)
+            if (::webView.isInitialized) {
+                ViewCompat.requestApplyInsets(webView)
+            }
+        }
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -328,8 +373,12 @@ class MainActivity : ComponentActivity() {
         val seamlessBg = if (isDark) Color.parseColor("#141518") else Color.parseColor("#f2f2f6")
 
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
-        window.statusBarColor = seamlessBg
-        window.navigationBarColor = seamlessBg
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = !isDark
             isAppearanceLightNavigationBars = !isDark
@@ -337,6 +386,39 @@ class MainActivity : ComponentActivity() {
         if (::webView.isInitialized) {
             webView.setBackgroundColor(seamlessBg)
         }
+    }
+
+    private fun applyOrientationSystemBars(config: Configuration = resources.configuration) {
+        val isLandscape = config.orientation == Configuration.ORIENTATION_LANDSCAPE
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            if (isLandscape) {
+                hide(WindowInsetsCompat.Type.statusBars())
+            } else {
+                show(WindowInsetsCompat.Type.statusBars())
+            }
+        }
+    }
+
+    private fun dispatchSafeInsetsToWeb(windowInsets: WindowInsetsCompat) {
+        val density = resources.displayMetrics.density.coerceAtLeast(1f)
+        val mask = WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+        val vis = windowInsets.getInsets(mask)
+        val topCss = String.format(Locale.US, "%.1fpx", vis.top / density)
+        val rightCss = String.format(Locale.US, "%.1fpx", vis.right / density)
+        val bottomCss = String.format(Locale.US, "%.1fpx", vis.bottom / density)
+        val leftCss = String.format(Locale.US, "%.1fpx", vis.left / density)
+        val script = buildString {
+            append("(function(){var r=document.documentElement.style;")
+            append("r.setProperty('--ak-inset-top','$topCss');")
+            append("r.setProperty('--ak-inset-right','$rightCss');")
+            append("r.setProperty('--ak-inset-bottom','$bottomCss');")
+            append("r.setProperty('--ak-inset-left','$leftCss');")
+            append("})();")
+        }
+        latestInsetsJs = script
+        emitJs(script)
     }
 
     override fun onPause() {
@@ -363,6 +445,10 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         synchronized(volumeLock) {
             isActivityResumed = true
+        }
+        applyOrientationSystemBars(resources.configuration)
+        if (::webView.isInitialized) {
+            ViewCompat.requestApplyInsets(webView)
         }
         gyroController.setDisplayRotation(currentDisplayRotation())
         gyroController.onResume()
@@ -793,6 +879,15 @@ class MainActivity : ComponentActivity() {
                     "landscape" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                     "system" -> ActivityInfo.SCREEN_ORIENTATION_FULL_USER
                     else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                }
+                applyOrientationSystemBars(resources.configuration)
+                if (::webView.isInitialized) {
+                    webView.post {
+                        if (!isDestroyed) {
+                            applyOrientationSystemBars(resources.configuration)
+                            ViewCompat.requestApplyInsets(webView)
+                        }
+                    }
                 }
                 gyroController.setDisplayRotation(currentDisplayRotation())
             }
