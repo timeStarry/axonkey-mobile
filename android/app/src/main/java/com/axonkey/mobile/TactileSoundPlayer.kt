@@ -15,16 +15,19 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * Low-latency procedural mechanical micro-switch sound synthesizer.
+ * Profile C ("Leica M Ratchet & Shutter Dial") procedural mechanical sound synthesizer.
  *
- * Synthesizes ultra-short (4.5ms–12ms) exponentially damped 48kHz PCM16 transients once into
- * app cache and preloads them into Android [SoundPool] under `USAGE_ASSISTANCE_SONIFICATION`,
- * delivering crisp, hardware-grade tactile acoustics without mushy OS water-drop sounds.
+ * Uses `USAGE_GAME` + `CONTENT_TYPE_SONIFICATION` so explicit controller click sounds follow
+ * the user's Media volume without stealing audio focus and without being muted by MIUI/HyperOS
+ * system touch-sound settings. Each transient is framed in a 64ms 48kHz PCM16 buffer with a
+ * subtle 3.5ms anti-gate pre-roll so smartphone SmartPA speaker amplifiers never swallow clicks.
  */
 class TactileSoundPlayer(context: Context) {
     companion object {
         private const val SAMPLE_RATE = 48_000
-        private const val CACHE_DIR_NAME = "tactile_sfx_v1"
+        private const val TOTAL_BUFFER_SAMPLES = 3_072 // 64ms @ 48kHz prevents SoundPool / SmartPA truncation
+        private const val PREROLL_SAMPLES = 168 // 3.5ms sub-audible amplifier wake-up lead-in
+        private const val CACHE_DIR_NAME = "tactile_sfx_v3_leica"
     }
 
     private val appContext = context.applicationContext
@@ -36,10 +39,10 @@ class TactileSoundPlayer(context: Context) {
     private var released = false
 
     private val soundPool: SoundPool = SoundPool.Builder()
-        .setMaxStreams(4)
+        .setMaxStreams(6)
         .setAudioAttributes(
             AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                .setUsage(AudioAttributes.USAGE_GAME)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
         )
@@ -80,10 +83,10 @@ class TactileSoundPlayer(context: Context) {
         if (!readyIds.contains(sampleId)) return
 
         val gain = when (normalized) {
-            "detent" -> 0.20f
-            "confirm" -> 0.30f
-            "heavy" -> 0.34f
-            else -> 0.27f
+            "detent" -> 0.62f
+            "confirm" -> 0.82f
+            "heavy" -> 0.88f
+            else -> 0.76f
         }
         runCatching {
             soundPool.play(sampleId, gain, gain, 1, 0, 1.0f)
@@ -101,7 +104,7 @@ class TactileSoundPlayer(context: Context) {
     private fun preloadTransient(dir: File, name: String, pcmSamples: ShortArray) {
         if (released) return
         val wavFile = File(dir, "$name.wav")
-        if (!wavFile.exists() || wavFile.length() < 64L) {
+        if (!wavFile.exists() || wavFile.length() < 512L) {
             writeMonoWav16(wavFile, pcmSamples)
         }
         if (!released) {
@@ -112,75 +115,58 @@ class TactileSoundPlayer(context: Context) {
         }
     }
 
-    /** Crisp ~6.5ms machined aluminum micro-switch click (`tap`). */
-    private fun synthesizeTap(): ShortArray {
-        val count = (SAMPLE_RATE * 0.0065).roundToInt()
-        val out = ShortArray(count)
-        for (i in 0 until count) {
+    private fun buildFramedBuffer(activeSeconds: Double, generator: (Double, Int) -> Double): ShortArray {
+        val out = ShortArray(TOTAL_BUFFER_SAMPLES)
+        val activeSamples = (SAMPLE_RATE * activeSeconds).roundToInt()
+            .coerceAtMost(TOTAL_BUFFER_SAMPLES - PREROLL_SAMPLES)
+        for (i in 0 until PREROLL_SAMPLES) {
+            val w = sin(2.0 * PI * 250.0 * (i.toDouble() / SAMPLE_RATE)) * 12.0
+            out[i] = w.roundToInt().toShort()
+        }
+        for (i in 0 until activeSamples) {
             val t = i.toDouble() / SAMPLE_RATE
-            val attack = (i.coerceAtMost(14)).toDouble() / 14.0
-            val env = attack * exp(-t / 0.00135)
-            val snap = exp(-t / 0.00035) * sin(2.0 * PI * 4_200.0 * t)
-            val body = 0.68 * sin(2.0 * PI * 1_920.0 * t) + 0.32 * sin(2.0 * PI * 3_540.0 * t)
-            val sample = ((0.72 * body * env + 0.28 * snap) * 24_000.0).roundToInt()
-            out[i] = sample.coerceIn(-32767, 32767).toShort()
+            val v = generator(t, i).coerceIn(-1.0, 1.0)
+            out[PREROLL_SAMPLES + i] = (v * 30_000.0).roundToInt().coerceIn(-32767, 32767).toShort()
         }
         return out
     }
 
-    /** Ultra-tight ~4.5ms rotary wheel / sector detent tick (`detent`). */
-    private fun synthesizeDetent(): ShortArray {
-        val count = (SAMPLE_RATE * 0.0045).roundToInt()
-        val out = ShortArray(count)
-        for (i in 0 until count) {
-            val t = i.toDouble() / SAMPLE_RATE
-            val attack = (i.coerceAtMost(10)).toDouble() / 10.0
-            val env = attack * exp(-t / 0.0009)
-            val wave = 0.65 * sin(2.0 * PI * 2_480.0 * t) + 0.35 * sin(2.0 * PI * 4_600.0 * t)
-            val sample = (wave * env * 21_000.0).roundToInt()
-            out[i] = sample.coerceIn(-32767, 32767).toShort()
-        }
-        return out
+    /** Profile C (`tap`): ~15ms precision camera shutter micro-detent. */
+    private fun synthesizeTap(): ShortArray = buildFramedBuffer(0.015) { t, i ->
+        val attack = (i.coerceAtMost(10)).toDouble() / 10.0
+        val body = 0.62 * exp(-t / 0.0018) * sin(2.0 * PI * 2_350.0 * t)
+        val snap = 0.38 * exp(-t / 0.0007) * sin(2.0 * PI * 4_650.0 * t)
+        attack * (body + snap) * 0.88
     }
 
-    /** Positive ~12ms dual-latch acoustic click (`confirm` / `recenter`). */
-    private fun synthesizeConfirm(): ShortArray {
-        val count = (SAMPLE_RATE * 0.0125).roundToInt()
-        val out = ShortArray(count)
-        val secondOffset = 0.0048
-        for (i in 0 until count) {
-            val t = i.toDouble() / SAMPLE_RATE
-            val env1 = ((i.coerceAtMost(12)).toDouble() / 12.0) * exp(-t / 0.0013)
-            val w1 = sin(2.0 * PI * 1_720.0 * t) * env1 * 0.62
-
-            val w2 = if (t >= secondOffset) {
-                val t2 = t - secondOffset
-                val idx2 = ((t2 * SAMPLE_RATE).roundToInt()).coerceAtMost(12)
-                val env2 = (idx2.toDouble() / 12.0) * exp(-t2 / 0.00155)
-                (0.75 * sin(2.0 * PI * 2_360.0 * t2) + 0.25 * sin(2.0 * PI * 3_800.0 * t2)) * env2 * 0.85
-            } else {
-                0.0
-            }
-
-            val sample = ((w1 + w2) * 23_500.0).roundToInt()
-            out[i] = sample.coerceIn(-32767, 32767).toShort()
-        }
-        return out
+    /** Profile C (`detent`): ~10ms Leica aperture ring pawl tick. */
+    private fun synthesizeDetent(): ShortArray = buildFramedBuffer(0.010) { t, i ->
+        val attack = (i.coerceAtMost(8)).toDouble() / 8.0
+        val env = attack * exp(-t / 0.0012)
+        (0.55 * sin(2.0 * PI * 2_850.0 * t) + 0.45 * sin(2.0 * PI * 5_200.0 * t)) * env * 0.76
     }
 
-    /** Deeper ~9.5ms damped mechanical thock (`heavy`). */
-    private fun synthesizeHeavy(): ShortArray {
-        val count = (SAMPLE_RATE * 0.0095).roundToInt()
-        val out = ShortArray(count)
-        for (i in 0 until count) {
-            val t = i.toDouble() / SAMPLE_RATE
-            val attack = (i.coerceAtMost(16)).toDouble() / 16.0
-            val env = attack * exp(-t / 0.0021)
-            val wave = 0.72 * sin(2.0 * PI * 1_040.0 * t) + 0.28 * sin(2.0 * PI * 2_080.0 * t)
-            val sample = (wave * env * 26_000.0).roundToInt()
-            out[i] = sample.coerceIn(-32767, 32767).toShort()
+    /** Profile C (`confirm` / `recenter`): ~26ms crisp dual-pawl mechanical latch. */
+    private fun synthesizeConfirm(): ShortArray = buildFramedBuffer(0.026) { t, _ ->
+        val w1 = exp(-t / 0.0016) * sin(2.0 * PI * 2_400.0 * t) * 0.68
+        val secondOffset = 0.0058
+        val w2 = if (t >= secondOffset) {
+            val t2 = t - secondOffset
+            exp(-t2 / 0.0022) *
+                (0.60 * sin(2.0 * PI * 3_100.0 * t2) + 0.40 * sin(2.0 * PI * 4_800.0 * t2)) *
+                0.86
+        } else {
+            0.0
         }
-        return out
+        w1 + w2
+    }
+
+    /** Profile C (`heavy`): ~22ms solid brass/steel lock detent. */
+    private fun synthesizeHeavy(): ShortArray = buildFramedBuffer(0.022) { t, i ->
+        val attack = (i.coerceAtMost(12)).toDouble() / 12.0
+        val body = exp(-t / 0.0028) * sin(2.0 * PI * 1_350.0 * t) * 0.75
+        val edge = exp(-t / 0.0009) * sin(2.0 * PI * 3_900.0 * t) * 0.40
+        attack * (body + edge)
     }
 
     private fun writeMonoWav16(target: File, samples: ShortArray) {
@@ -190,13 +176,13 @@ class TactileSoundPlayer(context: Context) {
         buf.putInt(36 + dataBytes)
         buf.put("WAVE".toByteArray(Charsets.US_ASCII))
         buf.put("fmt ".toByteArray(Charsets.US_ASCII))
-        buf.putInt(16) // PCM chunk size
-        buf.putShort(1) // PCM format = 1
-        buf.putShort(1) // Channels = 1 (mono)
+        buf.putInt(16)
+        buf.putShort(1)
+        buf.putShort(1)
         buf.putInt(SAMPLE_RATE)
-        buf.putInt(SAMPLE_RATE * 2) // ByteRate
-        buf.putShort(2) // BlockAlign
-        buf.putShort(16) // BitsPerSample
+        buf.putInt(SAMPLE_RATE * 2)
+        buf.putShort(2)
+        buf.putShort(16)
         buf.put("data".toByteArray(Charsets.US_ASCII))
         buf.putInt(dataBytes)
         for (s in samples) {

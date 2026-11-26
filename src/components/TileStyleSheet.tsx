@@ -5,7 +5,7 @@ import { BENTO_SPAN_OPTIONS, clampSpan, normalizePageZones } from '../input/bent
 import type { TileMode } from '../protocol/types'
 import { useMobileStore } from '../state/useMobileStore'
 import { triggerHaptic } from '../transport/nativeBridge'
-import { ACCENT_KEYS, ICON_KEYS, getAccentStyle, getTileIcon } from '../ui/icons'
+import { ACCENT_KEYS, ICON_KEYS, getAccentStyle, getIconLabelZh, getTileIcon } from '../ui/icons'
 
 export function TileStyleSheet() {
   const target = useMobileStore((s) => s.editingTileTarget)
@@ -59,6 +59,7 @@ export function TileStyleSheet() {
         <span className="ak-text-2 text-xs font-medium shrink-0">名称</span>
         <input
           type="text"
+          aria-label="按键名称"
           value={tile.label}
           maxLength={24}
           placeholder="按键名称"
@@ -78,6 +79,8 @@ export function TileStyleSheet() {
                 <button
                   key={opt.label}
                   type="button"
+                  aria-pressed={selected}
+                  aria-label={`尺寸 ${opt.colSpan}乘${opt.rowSpan}`}
                   onClick={() => {
                     triggerHaptic('tap')
                     updateTile(page.id, tile.id, {
@@ -104,6 +107,7 @@ export function TileStyleSheet() {
         <div className="ak-seg grid grid-cols-2 gap-1 p-0.5 rounded-[14px] border">
           <button
             type="button"
+            aria-pressed={tile.mode === 'gesture'}
             onClick={() => handleModeChange('gesture')}
             className={clsx(
               'h-8 rounded-[11px] text-xs font-medium transition-colors',
@@ -114,6 +118,7 @@ export function TileStyleSheet() {
           </button>
           <button
             type="button"
+            aria-pressed={tile.mode === 'hold'}
             onClick={() => handleModeChange('hold')}
             className={clsx(
               'h-8 rounded-[11px] text-xs font-medium transition-colors',
@@ -136,6 +141,8 @@ export function TileStyleSheet() {
               <button
                 key={acc}
                 type="button"
+                aria-pressed={active}
+                aria-label={`颜色：${st.label}`}
                 onClick={() => {
                   triggerHaptic('tap')
                   updateTile(page.id, tile.id, { accent: acc })
@@ -168,7 +175,8 @@ export function TileStyleSheet() {
               <button
                 key={iconKey}
                 type="button"
-                aria-label={`图标 ${iconKey}`}
+                aria-pressed={selected}
+                aria-label={`图标：${getIconLabelZh(iconKey)}`}
                 onClick={() => {
                   triggerHaptic('tap')
                   updateTile(page.id, tile.id, { icon: iconKey })

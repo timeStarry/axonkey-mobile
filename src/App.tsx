@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
+  ChevronRight,
   CircleDot,
   Compass,
   LayoutGrid,
@@ -10,6 +12,7 @@ import {
   Plus,
   SlidersHorizontal,
   Trash2,
+  X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { AboutUpdateSheet } from './components/AboutUpdateSheet'
@@ -80,6 +83,14 @@ export function App() {
   const conflictBanner = useMobileStore((s) => s.conflictBanner)
   const errorToast = useMobileStore((s) => s.errorToast)
   const hudToast = useMobileStore((s) => s.hudToast)
+  const pairingOpen = useMobileStore((s) => s.pairingOpen)
+  const feelSheetOpen = useMobileStore((s) => s.feelSheetOpen)
+  const pointerSettingsOpen = useMobileStore((s) => s.pointerSettingsOpen)
+  const pointerHelpOpen = useMobileStore((s) => s.pointerHelpOpen)
+  const editingTileTarget = useMobileStore((s) => s.editingTileTarget)
+  const pageManagerOpen = useMobileStore((s) => s.pageManagerOpen)
+  const aboutSheetOpen = useMobileStore((s) => s.aboutSheetOpen)
+  const versionCompatNotice = useMobileStore((s) => s.versionCompatNotice)
 
   const setWorkspaceMode = useMobileStore((s) => s.setWorkspaceMode)
   const setActivePage = useMobileStore((s) => s.setActivePage)
@@ -98,6 +109,7 @@ export function App() {
   const deleteZone = useMobileStore((s) => s.deleteZone)
   const dismissConflict = useMobileStore((s) => s.dismissConflict)
   const clearError = useMobileStore((s) => s.clearError)
+  const dismissHudToast = useMobileStore((s) => s.dismissHudToast)
 
   const [viewport, setViewport] = useState(readViewportSize)
   const [addComponentOpen, setAddComponentOpen] = useState(false)
@@ -187,26 +199,79 @@ export function App() {
     }
   }
 
-  const renderBanners = () => (
-    <>
-      {conflictBanner && (
-        <div className="mx-3.5 mt-1.5 px-3 py-1.5 rounded-[14px] border border-amber-500/30 flex items-center justify-between gap-2 text-xs shrink-0">
-          <span className="truncate">{conflictBanner}</span>
-          <button type="button" onClick={dismissConflict} className="shrink-0 underline">
-            知道了
-          </button>
-        </div>
-      )}
-      {errorToast && (
-        <div className="mx-3.5 mt-1.5 px-3 py-1.5 rounded-[14px] border border-rose-500/30 text-rose-500 flex items-center justify-between gap-2 text-xs shrink-0">
-          <span className="truncate">{errorToast}</span>
-          <button type="button" onClick={clearError} className="shrink-0 underline">
-            关闭
-          </button>
-        </div>
-      )}
-    </>
-  )
+  const anySheetOpen =
+    pairingOpen ||
+    feelSheetOpen ||
+    pointerSettingsOpen ||
+    pointerHelpOpen ||
+    Boolean(editingTileTarget) ||
+    pageManagerOpen ||
+    aboutSheetOpen ||
+    Boolean(versionCompatNotice) ||
+    addComponentOpen
+
+  const renderFloatingNotices = () => {
+    if (!conflictBanner && !errorToast) return null
+    return (
+      <div
+        className={clsx(
+          'pointer-events-none fixed z-[45] flex flex-col gap-1.5',
+          isSplitLandscape && !layoutEditing
+            ? 'left-[224px] right-3.5 top-[calc(max(var(--ak-inset-top,0px),env(safe-area-inset-top,0px))+10px)]'
+            : 'left-3.5 right-3.5 top-[calc(max(var(--ak-inset-top,0px),env(safe-area-inset-top,0px))+48px)]',
+        )}
+      >
+        {conflictBanner && (
+          <div
+            role="alert"
+            className="pointer-events-auto ak-elevated-alt mx-auto w-full max-w-md px-3.5 py-2.5 rounded-[18px] border shadow-xl backdrop-blur-md flex items-center justify-between gap-2.5 text-xs"
+          >
+            <div className="inline-flex items-center gap-2 min-w-0">
+              <span className="w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 inline-flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-3.5 h-3.5" />
+              </span>
+              <span className="ak-text-1 font-medium truncate">{conflictBanner}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic('tap')
+                dismissConflict()
+              }}
+              className="ak-pill-strong ak-text-1 h-6 px-2.5 rounded-full border text-[11px] font-medium shrink-0 active:scale-95 transition-transform"
+            >
+              知道了
+            </button>
+          </div>
+        )}
+        {errorToast && (
+          <div
+            role="alert"
+            data-testid="floating-error-card"
+            className="pointer-events-auto ak-elevated-alt mx-auto w-full max-w-md px-3.5 py-2.5 rounded-[18px] border shadow-xl backdrop-blur-md flex items-center justify-between gap-2.5 text-xs"
+          >
+            <div className="inline-flex items-center gap-2 min-w-0">
+              <span className="w-6 h-6 rounded-full bg-rose-500/15 text-rose-400 inline-flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-3.5 h-3.5" />
+              </span>
+              <span className="ak-text-1 font-medium truncate">{errorToast}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic('tap')
+                clearError()
+              }}
+              aria-label="关闭提示"
+              className="ak-pill ak-text-2 w-6 h-6 rounded-full border inline-flex items-center justify-center shrink-0 active:scale-95 transition-transform"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   const renderEditTopBar = (inSplitRail = false) => (
     <header
@@ -575,6 +640,8 @@ export function App() {
 
             <button
               type="button"
+              role="switch"
+              aria-checked={zone.showButtons !== false}
               onClick={() => {
                 triggerHaptic('tap')
                 updateZone(editingCurrentPage.id, zone.id, {
@@ -663,8 +730,6 @@ export function App() {
 
   const renderMainStage = (compactRing = false) => (
     <>
-      {renderBanners()}
-
       <main
         data-testid="main-stage"
         onClick={(e) => {
@@ -677,12 +742,13 @@ export function App() {
       >
         {layoutEditing ? (
           <div
+            data-testid="stage-scrollport"
             onClick={(e) => {
               if (e.target === e.currentTarget) {
                 setSelectedEditItem(null)
               }
             }}
-            className="flex-1 min-h-0 overflow-y-auto no-scrollbar"
+            className="flex-1 min-h-0 -mx-2 px-2 pt-1 pb-2 overflow-y-auto no-scrollbar"
           >
             <PageZoneRenderer page={editingCurrentPage} compact={compactRing} />
           </div>
@@ -691,13 +757,14 @@ export function App() {
             {workspaceMode === 'remote' && (
               <div className="flex-1 min-h-0 flex flex-col gap-2">
                 {remotePages.length > 1 && (
-                  <div className="flex items-center gap-1.5 overflow-x-auto shrink-0 no-scrollbar">
+                  <div className="flex items-center gap-1.5 -mx-1 px-1 py-0.5 overflow-x-auto shrink-0 no-scrollbar">
                     {remotePages.map((p) => {
                       const active = p.id === remotePage.id
                       return (
                         <button
                           key={p.id}
                           type="button"
+                          aria-pressed={active}
                           onClick={() => {
                             triggerHaptic('tap')
                             setActivePage(p.id)
@@ -714,7 +781,10 @@ export function App() {
                   </div>
                 )}
 
-                <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
+                <div
+                  data-testid="stage-scrollport"
+                  className="flex-1 min-h-0 -mx-2 px-2 pt-1 pb-2 overflow-y-auto no-scrollbar"
+                >
                   <PageZoneRenderer page={remotePage} compact={compactRing} />
                 </div>
               </div>
@@ -723,13 +793,14 @@ export function App() {
             {workspaceMode === 'deck' && (
               <div className="flex-1 min-h-0 flex flex-col gap-2">
                 {deckSelectablePages.length > 1 && (
-                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0">
+                  <div className="flex items-center gap-1.5 -mx-1 px-1 py-0.5 overflow-x-auto no-scrollbar shrink-0">
                     {deckSelectablePages.map((p) => {
                       const active = p.id === activeDeckPage?.id
                       return (
                         <button
                           key={p.id}
                           type="button"
+                          aria-pressed={active}
                           onClick={() => {
                             triggerHaptic('tap')
                             setActivePage(p.id)
@@ -746,7 +817,10 @@ export function App() {
                   </div>
                 )}
 
-                <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
+                <div
+                  data-testid="stage-scrollport"
+                  className="flex-1 min-h-0 -mx-2 px-2 pt-1 pb-2 overflow-y-auto no-scrollbar"
+                >
                   {activeDeckPage && (
                     <PageZoneRenderer page={activeDeckPage} compact={compactRing} />
                   )}
@@ -765,18 +839,64 @@ export function App() {
     </>
   )
 
+  const hudPositionCls = anySheetOpen
+    ? 'top-[calc(max(var(--ak-inset-top,0px),env(safe-area-inset-top,0px))+14px)] left-1/2 -translate-x-1/2'
+    : isSplitLandscape
+      ? clsx(
+          'bottom-[calc(max(var(--ak-inset-bottom,0px),env(safe-area-inset-bottom,0px))+14px)] -translate-x-1/2',
+          layoutEditing ? 'left-1/2' : 'left-[calc(50%+106px)]',
+        )
+      : layoutEditing
+        ? 'bottom-[calc(max(var(--ak-inset-bottom,0px),env(safe-area-inset-bottom,0px))+98px)] left-1/2 -translate-x-1/2'
+        : workspaceMode === 'pointer'
+          ? 'bottom-[calc(max(var(--ak-inset-bottom,0px),env(safe-area-inset-bottom,0px))+178px)] left-1/2 -translate-x-1/2'
+          : 'bottom-[calc(max(var(--ak-inset-bottom,0px),env(safe-area-inset-bottom,0px))+118px)] left-1/2 -translate-x-1/2'
+
   const renderSheets = () => (
     <>
+      {renderFloatingNotices()}
       {hudToast && (
         <div
           key={hudToast.id}
           role="status"
           aria-live="polite"
           data-testid="hud-toast"
-          className="pointer-events-none fixed top-14 left-1/2 -translate-x-1/2 z-40 max-w-[88vw] px-3.5 py-1.5 rounded-full border ak-elevated-alt text-xs font-medium shadow-lg backdrop-blur-md flex items-center gap-1.5 animate-[hudFadeIn_140ms_ease-out]"
+          className={clsx(
+            'fixed z-[60] max-w-[90vw] rounded-full border ak-elevated-alt text-xs font-medium shadow-[0_8px_24px_rgba(0,0,0,0.34)] backdrop-blur-md flex items-center gap-2 animate-[hudFadeIn_140ms_ease-out]',
+            hudToast.action
+              ? 'pointer-events-auto pl-3.5 pr-1.5 py-1.5'
+              : 'pointer-events-none px-3.5 py-2',
+            hudPositionCls,
+          )}
         >
-          <span className="w-1.5 h-1.5 rounded-full ak-live-dot shrink-0" />
-          <span className="truncate">{hudToast.message}</span>
+          <span
+            className={clsx(
+              'w-1.5 h-1.5 rounded-full shrink-0',
+              hudToast.tone === 'amber'
+                ? 'bg-amber-400'
+                : hudToast.tone === 'rose'
+                  ? 'bg-rose-400'
+                  : 'ak-live-dot',
+            )}
+          />
+          <span className="ak-text-1 truncate">{hudToast.message}</span>
+          {hudToast.action && (
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic('tap')
+                const actId = hudToast.action?.id
+                dismissHudToast()
+                if (actId === 'open_pairing') {
+                  setPairingOpen(true)
+                }
+              }}
+              className="ak-primary-solid ml-0.5 h-6 px-2.5 rounded-full text-[11px] font-semibold inline-flex items-center gap-0.5 shrink-0 active:scale-95 transition-transform"
+            >
+              <span>{hudToast.action.label}</span>
+              <ChevronRight className="w-3 h-3" />
+            </button>
+          )}
         </div>
       )}
       <PairingSheet />
@@ -826,23 +946,37 @@ export function App() {
         setPairingOpen(true)
       }}
       aria-label="连接与配对"
-      className="inline-flex items-center gap-2 min-w-0 py-1 pr-2 rounded-full active:opacity-70 transition-opacity"
+      aria-description={
+        isOnlineReal
+          ? `已连接电脑 ${hostName}${contextBadge ? `，当前应用 ${contextBadge}` : ''}`
+          : isConnecting
+            ? '正在重连电脑'
+            : '尚未连接电脑，点击配对'
+      }
+      className={clsx(
+        'inline-flex items-center gap-2 min-w-0 rounded-full active:scale-[0.98] transition-all',
+        isOnlineReal
+          ? 'py-1 pr-2 active:opacity-70'
+          : 'ak-elevated border px-2.5 py-1',
+      )}
     >
       <span
         className={clsx(
           'w-2 h-2 rounded-full shrink-0',
-          isOnlineReal ? 'ak-live-dot' : 'bg-amber-500 animate-pulse',
+          isOnlineReal ? 'ak-live-dot' : 'bg-amber-400 animate-pulse',
         )}
       />
       <span className="ak-text-1 text-[13px] font-medium tracking-tight truncate max-w-[144px]">
         {isOnlineReal ? hostName : isConnecting ? '重连中…' : '未连接 · 点此配对'}
       </span>
-      {isOnlineReal && contextBadge && (
+      {isOnlineReal && contextBadge ? (
         <span className="ak-text-2 text-xs inline-flex items-center gap-1 min-w-0 max-w-[104px]">
           <span aria-hidden="true">·</span>
           <span className="truncate">{contextBadge}</span>
         </span>
-      )}
+      ) : !isOnlineReal ? (
+        <ChevronRight className="w-3.5 h-3.5 ak-text-2 shrink-0 -ml-1" />
+      ) : null}
     </button>
   )
 
@@ -891,6 +1025,7 @@ export function App() {
                     <button
                       key={item.id}
                       type="button"
+                      aria-current={active ? 'page' : undefined}
                       onClick={() => {
                         if (workspaceMode === item.id) return
                         handlePrimaryTabSelect(item.id)
@@ -977,6 +1112,7 @@ export function App() {
                   <button
                     key={item.id}
                     type="button"
+                    aria-current={active ? 'page' : undefined}
                     onClick={() => {
                       if (workspaceMode === item.id) return
                       handlePrimaryTabSelect(item.id)

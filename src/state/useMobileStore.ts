@@ -53,6 +53,8 @@ import {
   setNativeScreenOrientationMode,
   setNativeVolumeKeyMouseConfig,
   setSoundEnabled,
+  setVoiceRecordingActive,
+  triggerControlFeedback,
   triggerHaptic,
   updateSavedHostAddrs,
   type AirMouseFeelMode,
@@ -63,6 +65,7 @@ import {
   type SavedHostProfile,
   type ScreenOrientationMode,
   type ThemeMode,
+  type VoiceTriggerMode,
   type VolumeKeyMouseMode,
 } from '../transport/nativeBridge'
 import {
@@ -71,6 +74,7 @@ import {
 } from '../transport/sessionClient'
 
 export type WorkspaceMode = 'remote' | 'deck' | 'pointer'
+export type VoiceSessionState = 'idle' | 'holding' | 'locked'
 export type {
   AirMouseFeelMode,
   AirMouseHandedness,
@@ -78,11 +82,12 @@ export type {
   PointerTabMode,
   ScreenOrientationMode,
   ThemeMode,
+  VoiceTriggerMode,
   VolumeKeyMouseMode,
 }
 
 export interface TileFeedback {
-  status: 'ok' | 'error'
+  status: 'ok' | 'unbound' | 'error'
   at: number
 }
 
@@ -96,9 +101,26 @@ export interface GyroGuardNotice {
   at: number
 }
 
+export type HudToastTone = 'live' | 'amber' | 'rose'
+export type HudToastActionId = 'open_pairing'
+
+export interface HudToastOptions {
+  tone?: HudToastTone
+  durationMs?: number
+  action?: {
+    id: HudToastActionId
+    label: string
+  }
+}
+
 export interface HudToastNotice {
   id: number
   message: string
+  tone: HudToastTone
+  action?: {
+    id: HudToastActionId
+    label: string
+  }
 }
 
 export interface EditingTileTarget {
@@ -145,6 +167,7 @@ interface MobileStoreState {
   pageManagerOpen: boolean
 
   voiceLevel: number
+  voiceSessionState: VoiceSessionState
   gyroGuard: GyroGuardNotice | null
   hudToast: HudToastNotice | null
 
@@ -172,7 +195,9 @@ interface MobileStoreState {
   setPointerSettingsOpen: (open: boolean) => void
   setPointerHelpOpen: (open: boolean) => void
   setAboutSheetOpen: (open: boolean) => void
-  showHudToast: (message: string) => void
+  showHudToast: (message: string, options?: HudToastOptions) => void
+  dismissHudToast: () => void
+  promptDisconnectedAction: () => void
   setEmbeddedAirMouseZoneActive: (zoneId: string, active: boolean) => void
   setLayoutEditing: (editing: boolean) => void
   setSelectedEditItem: (item: SelectedEditItem) => void
@@ -208,6 +233,9 @@ interface MobileStoreState {
 
   updateSensitivity: (patch: { pointerSensitivity?: number; scrollSensitivity?: number }) => void
   resetPointerSettings: () => void
+  beginVoiceCapture: (initialState: 'holding' | 'locked') => boolean
+  promoteVoiceToLocked: () => void
+  finishVoiceCapture: (cancel?: boolean) => void
   sendText: (text: string, mode: TextCommitMode, submit: boolean) => boolean
   getClient: () => MobileSessionClient
 }
@@ -224,6 +252,8 @@ let listenersBound = false
 let discoveryResetTimer: ReturnType<typeof setTimeout> | null = null
 let gyroGuardTimer: ReturnType<typeof setTimeout> | null = null
 let hudToastTimer: ReturnType<typeof setTimeout> | null = null
+let errorToastTimer: ReturnType<typeof setTimeout> | null = null
+let lastDisconnectedHapticAt = 0
 let hudToastSeq = 1
 let volPressSeq = 1
 let appPausedRuntime = false
@@ -279,6 +309,25 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
   setSoundEnabled(initialFeel.soundEnabled)
   applyEffectiveThemeToDocument(initialEffectiveTheme)
 
+  const scheduleErrorToast = (message: string, durationMs = 3600) => {
+    if (errorToastTimer) clearTimeout(errorToastTimer)
+    set({ errorToast: message })
+    errorToastTimer = setTimeout(() => {
+      if (get().errorToast === message) {
+        set({ errorToast: null })
+      }
+      errorToastTimer = null
+    }, durationMs)
+  }
+
+  const findTileLabelById = (tileId: string): string | null => {
+    for (const page of get().deck.pages) {
+      const found = page.tiles.find((t) => t.id === tileId)
+      if (found?.label?.trim()) return found.label.trim()
+    }
+    return null
+  }
+
   const ensureClient = (): MobileSessionClient => {
     if (singletonClient) return singletonClient
     singletonClient = new MobileSessionClient(
@@ -287,9 +336,10 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
           const keepOn = phase === 'active' && get().localFeel.keepScreenOn
           setKeepScreenOn(keepOn)
           if (phase !== 'active') {
+            setVoiceRecordingActive(false)
             setNativeGyroClutch(false)
             setNativeGyroConfig('off', get().localFeel.gyroSensitivity)
-            set({ phase, statusDetail: detail ?? '', voiceLevel: 0 })
+            set({ phase, statusDetail: detail ?? '', voiceLevel: 0, voiceSessionState: 'idle' })
           } else {
             set({ phase, statusDetail: detail ?? '' })
           }
@@ -332,20 +382,46 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
         onContextChanged: (context, revision) => {
           set({ context, contextRevision: revision })
         },
-        onCommandResult: (requestId, ok, _code, message) => {
+        onCommandResult: (requestId, ok, code, message) => {
           const tileId = pendingTileReqMap.get(requestId)
+          const isUnbound =
+            !ok &&
+            (code === 'unbound_tile' ||
+              code === 'unbound_hold' ||
+              Boolean(message && message.includes('未绑定')))
+
           if (tileId) {
             pendingTileReqMap.delete(requestId)
             if (!ok) triggerHaptic('error')
             set((s) => ({
               tileFeedback: {
                 ...s.tileFeedback,
-                [tileId]: { status: ok ? 'ok' : 'error', at: Date.now() },
+                [tileId]: {
+                  status: ok ? 'ok' : isUnbound ? 'unbound' : 'error',
+                  at: Date.now(),
+                },
               },
-              errorToast: !ok && message ? message : s.errorToast,
             }))
+
+            if (isUnbound) {
+              const label = findTileLabelById(tileId)
+              const prefix = label ? `「${label}」` : '该按键'
+              const unboundHint =
+                code === 'unbound_hold'
+                  ? `${prefix}暂未配置按住键 · 请在电脑端设置`
+                  : `${prefix}暂未绑定动作 · 请在电脑端配置`
+              get().showHudToast(unboundHint, { tone: 'amber', durationMs: 2200 })
+            } else if (!ok && message) {
+              scheduleErrorToast(message)
+            }
+          } else if (isUnbound) {
+            triggerHaptic('error')
+            get().showHudToast(message || '该按键暂未绑定动作 · 请在电脑端配置', {
+              tone: 'amber',
+              durationMs: 2200,
+            })
           } else if (!ok && message) {
-            set({ errorToast: message })
+            scheduleErrorToast(message)
           }
         },
         onTextStatus: (_requestId, status, message) => {
@@ -368,7 +444,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
           set({ versionCompatNotice: notice, pairingOpen: false })
         },
         onError: (message) => {
-          set({ errorToast: message })
+          scheduleErrorToast(message)
         },
       },
       get().localFeel.deviceName,
@@ -409,6 +485,7 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     pageManagerOpen: false,
 
     voiceLevel: 0,
+    voiceSessionState: 'idle',
     gyroGuard: null,
     hudToast: null,
 
@@ -464,13 +541,13 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
             volPressSeq += 1
             const pressId = `vol-${button}-${volPressSeq}`
             heldVolKeyButtons.set(key, { button, pressId })
-            triggerHaptic('tap')
+            triggerControlFeedback('tap')
             ensureClient().sendPointerButton(button, 'down', pressId)
             return
           }
 
           if (mode === 'scroll') {
-            if (keyPhase === 'down') triggerHaptic('tap')
+            if (keyPhase === 'down') triggerControlFeedback('detent')
             const deltaY = key === 'up' ? 2.4 : -2.4
             ensureClient().sendPointerScroll(0, deltaY)
           }
@@ -541,10 +618,11 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
         const handlePause = () => {
           appPausedRuntime = true
           releaseHeldVolumeKeyButtons(singletonClient)
+          setVoiceRecordingActive(false)
           setNativeGyroClutch(false)
           setNativeGyroConfig('off', get().localFeel.gyroSensitivity)
           syncVolumeKeyCaptureWithStore(get())
-          set({ voiceLevel: 0 })
+          set({ voiceLevel: 0, voiceSessionState: 'idle' })
           client.handleVisibilityHidden()
         }
 
@@ -715,10 +793,11 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     },
 
     disconnect: () => {
+      setVoiceRecordingActive(false)
       setNativeGyroClutch(false)
       setNativeGyroConfig('off', get().localFeel.gyroSensitivity)
       ensureClient().disconnect('user_disconnect')
-      set({ connectingHostAddr: null, voiceLevel: 0 })
+      set({ connectingHostAddr: null, voiceLevel: 0, voiceSessionState: 'idle' })
     },
 
     setWorkspaceMode: (mode) => {
@@ -776,17 +855,55 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
     setAboutSheetOpen: (open) => set({ aboutSheetOpen: open }),
 
-    showHudToast: (message) => {
+    showHudToast: (message, options) => {
       if (hudToastTimer) clearTimeout(hudToastTimer)
       hudToastSeq += 1
       const id = hudToastSeq
-      set({ hudToast: { id, message } })
+      const tone: HudToastTone = options?.tone ?? 'live'
+      const durationMs =
+        options?.durationMs ?? (options?.action ? 2600 : tone === 'amber' ? 2100 : 1500)
+      set({
+        hudToast: {
+          id,
+          message,
+          tone,
+          ...(options?.action ? { action: options.action } : {}),
+        },
+      })
       hudToastTimer = setTimeout(() => {
         if (get().hudToast?.id === id) {
           set({ hudToast: null })
         }
         hudToastTimer = null
-      }, 1450)
+      }, durationMs)
+    },
+
+    dismissHudToast: () => {
+      if (hudToastTimer) {
+        clearTimeout(hudToastTimer)
+        hudToastTimer = null
+      }
+      set({ hudToast: null })
+    },
+
+    promptDisconnectedAction: () => {
+      const s = get()
+      if (s.phase === 'active') return
+      const now = Date.now()
+      if (now - lastDisconnectedHapticAt > 850) {
+        lastDisconnectedHapticAt = now
+        triggerHaptic('error')
+      }
+      const connecting =
+        s.phase === 'authenticating' || s.phase === 'synchronizing' || s.discoveringLan
+      s.showHudToast(connecting ? '正在连接电脑…' : '尚未连接电脑', {
+        tone: 'amber',
+        durationMs: 2600,
+        action: {
+          id: 'open_pairing',
+          label: connecting ? '连接管理' : '立即配对',
+        },
+      })
     },
 
     setEmbeddedAirMouseZoneActive: (zoneId, active) => {
@@ -800,6 +917,10 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
 
     setLayoutEditing: (editing) => {
       if (editing) {
+        if (get().voiceSessionState !== 'idle' || ensureClient().isVoiceActive()) {
+          setVoiceRecordingActive(false)
+          ensureClient().cancelVoiceStream('enter_edit_mode')
+        }
         setNativeGyroClutch(false)
         setNativeGyroConfig('off', get().localFeel.gyroSensitivity)
         const s = get()
@@ -826,6 +947,8 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
           editingTileTarget: null,
           pageManagerOpen: false,
           gyroGuard: null,
+          voiceSessionState: 'idle',
+          voiceLevel: 0,
           ...(targetPageId && targetPageId !== s.deck.activePageId
             ? { deck: { ...s.deck, activePageId: targetPageId } }
             : {}),
@@ -878,6 +1001,9 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
       if (patch.screenOrientation !== undefined) {
         setNativeScreenOrientationMode(merged.screenOrientation)
       }
+      if (patch.voiceTriggerMode === 'hold' && get().voiceSessionState === 'locked') {
+        get().finishVoiceCapture(false)
+      }
       saveLocalFeelPreferences(merged)
       setKeepScreenOn(get().phase === 'active' && merged.keepScreenOn)
       set({
@@ -897,7 +1023,13 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
     },
 
     dismissConflict: () => set({ conflictBanner: null }),
-    clearError: () => set({ errorToast: null }),
+    clearError: () => {
+      if (errorToastTimer) {
+        clearTimeout(errorToastTimer)
+        errorToastTimer = null
+      }
+      set({ errorToast: null })
+    },
     dismissVersionCompatNotice: () => {
       const cur = get().versionCompatNotice
       if (cur && cur.severity === 'soft') {
@@ -1259,12 +1391,52 @@ export const useMobileStore = create<MobileStoreState>((set, get) => {
         preferredPointerTab: DEFAULT_LOCAL_FEEL.preferredPointerTab,
         airMouseFeel: DEFAULT_LOCAL_FEEL.airMouseFeel,
         airMouseHandedness: DEFAULT_LOCAL_FEEL.airMouseHandedness,
+        airMousePadTapClick: DEFAULT_LOCAL_FEEL.airMousePadTapClick,
         threeFingerSystemGestures: DEFAULT_LOCAL_FEEL.threeFingerSystemGestures,
       })
       get().updateSensitivity({
         pointerSensitivity: DEFAULT_MOBILE_DECK.pointerSensitivity,
         scrollSensitivity: DEFAULT_MOBILE_DECK.scrollSensitivity,
       })
+    },
+
+    beginVoiceCapture: (initialState) => {
+      const s = get()
+      if (s.phase !== 'active') {
+        s.promptDisconnectedAction()
+        return false
+      }
+      if (s.voiceSessionState !== 'idle') return true
+      const ok = ensureClient().startVoiceStream()
+      if (!ok) {
+        triggerHaptic('error')
+        return false
+      }
+      setVoiceRecordingActive(true)
+      set({ voiceSessionState: initialState })
+      triggerHaptic('voiceStart')
+      return true
+    },
+
+    promoteVoiceToLocked: () => {
+      if (get().voiceSessionState !== 'holding') return
+      set({ voiceSessionState: 'locked' })
+      triggerHaptic('confirm')
+    },
+
+    finishVoiceCapture: (cancel = false) => {
+      const cur = get().voiceSessionState
+      const client = ensureClient()
+      setVoiceRecordingActive(false)
+      if (cur === 'idle' && !client.isVoiceActive()) return
+      set({ voiceSessionState: 'idle', voiceLevel: 0 })
+      if (cancel) {
+        triggerHaptic('error')
+        client.cancelVoiceStream('user_cancelled')
+      } else {
+        triggerHaptic('voiceStop')
+        client.stopVoiceStream()
+      }
     },
 
     sendText: (text, mode, submit) => {

@@ -80,6 +80,49 @@ export const CONTROLLED_ICONS: Record<string, LucideIcon> = {
 
 export const ICON_KEYS = Object.keys(CONTROLLED_ICONS)
 
+export const ICON_LABELS_ZH: Record<string, string> = {
+  sparkles: '星光',
+  zap: '闪电',
+  enter: '回车',
+  check: '确认',
+  esc: '关闭',
+  power: '电源',
+  home: '主页',
+  menu: '菜单',
+  command: '命令',
+  search: '搜索',
+  undo: '撤销',
+  play: '播放',
+  pause: '暂停',
+  'skip-back': '上一曲',
+  'skip-forward': '下一曲',
+  'volume-up': '音量加',
+  'volume-down': '音量减',
+  'volume-mute': '静音',
+  'arrow-up': '向上',
+  'arrow-down': '向下',
+  'arrow-left': '向左',
+  'arrow-right': '向右',
+  copy: '复制',
+  clipboard: '剪贴板',
+  terminal: '终端',
+  code: '代码',
+  folder: '文件夹',
+  save: '保存',
+  send: '发送',
+  mic: '麦克风',
+  keyboard: '键盘',
+  mouse: '鼠标',
+  layout: '布局',
+  plus: '新建',
+  refresh: '刷新',
+  delete: '删除',
+}
+
+export function getIconLabelZh(iconName: string): string {
+  return ICON_LABELS_ZH[iconName] ?? iconName
+}
+
 export function getTileIcon(iconName: string): LucideIcon {
   return CONTROLLED_ICONS[iconName] ?? Zap
 }

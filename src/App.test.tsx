@@ -5,6 +5,7 @@ import { useMobileStore } from './state/useMobileStore'
 import { DEFAULT_MOBILE_DECK } from './transport/defaultDeck'
 import {
   setVoiceRecordingActive,
+  triggerControlFeedback,
   triggerHaptic,
   type AxonkeyAndroidBridge,
 } from './transport/nativeBridge'
@@ -89,9 +90,20 @@ describe('Axonkey Mobile Production UX — Zero Demo Remnants, Same-LAN Guidance
       // 1. Fresh launch with no paired PC stays cleanly disconnected (never enters fake Demo Mode!)
       expect(screen.getByText('未连接 · 点此配对')).toBeTruthy()
       expect(screen.queryByText(/模拟体验/)).toBeNull()
+      expect(screen.getByTestId('stage-scrollport').className).toContain('-mx-2')
+      expect(screen.getByTestId('stage-scrollport').className).toContain('px-2')
 
-      // Open PairingSheet -> verify Same-LAN guidance & ZERO demo button
-      fireEvent.click(screen.getByLabelText('连接与配对'))
+      // Tapping any keycap while disconnected pops the bottom interactive Action Pill -> 1-tap opens PairingSheet!
+      const escDisconnectedBtn = document.querySelector(
+        '[data-bento-tile-id="remote.esc"]',
+      ) as HTMLElement
+      fireEvent.pointerDown(escDisconnectedBtn, { pointerId: 21, clientX: 40, clientY: 120 })
+      fireEvent.pointerUp(escDisconnectedBtn, { pointerId: 21, clientX: 40, clientY: 120 })
+      const disconnectedHud = screen.getByTestId('hud-toast')
+      expect(disconnectedHud.textContent).toContain('尚未连接电脑')
+      expect(disconnectedHud.className).toContain('bottom-')
+      fireEvent.click(within(disconnectedHud).getByText('立即配对'))
+
       const pairDialog = screen.getByRole('dialog', { name: '设备连接' })
       expect(
         within(pairDialog).getByText(/请确保手机与电脑连接在同一局域网/),
@@ -114,6 +126,32 @@ describe('Axonkey Mobile Production UX — Zero Demo Remnants, Same-LAN Guidance
       expect(screen.queryByText('继续执行')).toBeNull()
       expect(screen.getByText('按住说话')).toBeTruthy()
 
+      // Unbound tile feedback uses subtle keycap nudge + auto-fading HUD capsule (zero legacy top error bar)
+      const sendWssSpy = vi.spyOn(window.AxonkeyNative!, 'sendWssText')
+      sendWssSpy.mockClear()
+      const escConnectedBtn = document.querySelector(
+        '[data-bento-tile-id="remote.esc"]',
+      ) as HTMLElement
+      fireEvent.pointerDown(escConnectedBtn, { pointerId: 22, clientX: 40, clientY: 120 })
+      fireEvent.pointerUp(escConnectedBtn, { pointerId: 22, clientX: 40, clientY: 120 })
+      const sentRaw = sendWssSpy.mock.calls.at(-1)?.[0] ?? '{}'
+      const sentMsg = JSON.parse(sentRaw) as { requestId?: string }
+      act(() => {
+        window.__axonkeyNativeOnMessage?.(
+          JSON.stringify({
+            type: 'command.result',
+            requestId: sentMsg.requestId,
+            ok: false,
+            code: 'unbound_tile',
+            message: '该按键未绑定动作',
+          }),
+        )
+      })
+      expect(escConnectedBtn.className).toContain('ak-tile-unbound-nudge')
+      expect(escConnectedBtn.className).toContain('ring-inset')
+      expect(screen.getByTestId('hud-toast').textContent).toContain('「Esc」暂未绑定动作')
+      expect(screen.queryByTestId('floating-error-card')).toBeNull()
+
       // 2. True 1/4 Annular Sector Press Animation on Circular Clickpad (`触控圆盘`)
       const tileActivateSpy = vi.spyOn(useMobileStore.getState().getClient(), 'sendTileActivate')
       const clickpadRing = screen.getByTestId('circular-clickpad-ring')
@@ -129,7 +167,9 @@ describe('Axonkey Mobile Production UX — Zero Demo Remnants, Same-LAN Guidance
       fireEvent.pointerUp(upBtn, { pointerId: 1, clientX: 110, clientY: 20 })
       expect(upSectorPath.getAttribute('data-sector-active')).toBe('false')
       expect(tileActivateSpy).toHaveBeenCalledWith('remote.up', 'tap')
-      expect(playClickSoundMock).toHaveBeenCalledWith('tap')
+      // Click sound defaults to OFF until user enables it in Global Settings
+      expect(useMobileStore.getState().localFeel.soundEnabled).toBe(false)
+      expect(playClickSoundMock).not.toHaveBeenCalled()
 
       tileActivateSpy.mockClear()
       hapticMock.mockClear()
@@ -178,28 +218,83 @@ describe('Axonkey Mobile Production UX — Zero Demo Remnants, Same-LAN Guidance
       fireEvent.click(screen.getByText('飞鼠'))
       expect(screen.queryByLabelText('音量键鼠标已开启')).toBeNull()
 
-      // 5. Global Settings vs Pointer Settings + Optional Click Sound Toggle & Mic Mute Guard
+      // 5. Global Settings vs Pointer Settings + Default-Off Click Sound Toggle, Mic Mute Guard & Accessibility Semantics
       fireEvent.click(screen.getByLabelText('全局设置'))
       const globalDialog = screen.getByRole('dialog', { name: '全局设置' })
       expect(within(globalDialog).queryByText('飞鼠灵敏度')).toBeNull()
-      expect(within(globalDialog).getByText('按键提示音')).toBeTruthy()
+      const soundSwitch = within(globalDialog).getByRole('switch', { name: '按键提示音' })
+      expect(soundSwitch.getAttribute('aria-checked')).toBe('false')
 
-      fireEvent.click(within(globalDialog).getByText('按键提示音'))
-      expect(useMobileStore.getState().localFeel.soundEnabled).toBe(false)
       playClickSoundMock.mockClear()
       fireEvent.click(within(globalDialog).getByText('浅色'))
       expect(document.documentElement.dataset.theme).toBe('light')
       expect(setSystemBarThemeMock).toHaveBeenLastCalledWith(false)
       expect(playClickSoundMock).not.toHaveBeenCalled()
 
-      fireEvent.click(within(globalDialog).getByText('按键提示音'))
+      // Enable click sound -> plays 1 audition confirm click, stays SILENT on UI chrome, and ONLY clicks on controller actuation!
       playClickSoundMock.mockClear()
+      fireEvent.click(soundSwitch)
+      expect(useMobileStore.getState().localFeel.soundEnabled).toBe(true)
+      expect(soundSwitch.getAttribute('aria-checked')).toBe('true')
+      expect(playClickSoundMock).toHaveBeenCalledWith('confirm')
+
+      playClickSoundMock.mockClear()
+      triggerHaptic('tap') // UI chrome haptic -> silent!
+      expect(playClickSoundMock).not.toHaveBeenCalled()
+
       setVoiceRecordingActive(true)
-      triggerHaptic('tap')
+      triggerControlFeedback('tap') // Controller while mic active -> muted!
       expect(playClickSoundMock).not.toHaveBeenCalled()
       setVoiceRecordingActive(false)
-      triggerHaptic('tap')
+      triggerControlFeedback('tap') // Controller when mic idle -> plays Leica click!
       expect(playClickSoundMock).toHaveBeenCalledWith('tap')
+
+      // 6. Configurable Voice Trigger Modes: Hold, Toggle (点击常开) & Hybrid (智能双模)
+      fireEvent.click(within(globalDialog).getByText('点击常开'))
+      expect(useMobileStore.getState().localFeel.voiceTriggerMode).toBe('toggle')
+      fireEvent.click(screen.getByTestId('feel-sheet-backdrop'))
+
+      const startVoiceSpy = vi
+        .spyOn(useMobileStore.getState().getClient(), 'startVoiceStream')
+        .mockReturnValue(true)
+      const stopVoiceSpy = vi.spyOn(useMobileStore.getState().getClient(), 'stopVoiceStream')
+      const cancelVoiceSpy = vi.spyOn(useMobileStore.getState().getClient(), 'cancelVoiceStream')
+
+      const voiceBtn = screen.getByTestId('voice-trigger-btn')
+      expect(voiceBtn.textContent).toContain('点击说话')
+
+      // First tap starts hands-free listening and stays locked after finger lifts
+      fireEvent.pointerDown(voiceBtn, { pointerId: 31, clientY: 780 })
+      fireEvent.pointerUp(voiceBtn, { pointerId: 31, clientY: 780 })
+      expect(startVoiceSpy).toHaveBeenCalledTimes(1)
+      expect(stopVoiceSpy).not.toHaveBeenCalled()
+      expect(voiceBtn.textContent).toContain('正在聆听 · 点击结束')
+      expect(screen.getByTestId('cancel-locked-voice')).toBeTruthy()
+
+      // Second tap finishes & commits cleanly
+      fireEvent.pointerDown(voiceBtn, { pointerId: 32, clientY: 780 })
+      fireEvent.pointerUp(voiceBtn, { pointerId: 32, clientY: 780 })
+      expect(stopVoiceSpy).toHaveBeenCalledTimes(1)
+      expect(voiceBtn.textContent).toContain('点击说话')
+
+      // Cancel button aborts hands-free listening without committing
+      fireEvent.pointerDown(voiceBtn, { pointerId: 33, clientY: 780 })
+      fireEvent.pointerUp(voiceBtn, { pointerId: 33, clientY: 780 })
+      fireEvent.click(screen.getByTestId('cancel-locked-voice'))
+      expect(cancelVoiceSpy).toHaveBeenCalledWith('user_cancelled')
+      expect(voiceBtn.textContent).toContain('点击说话')
+
+      // Hybrid mode: quick tap locks hands-free open!
+      act(() => {
+        useMobileStore.getState().updateLocalFeel({ voiceTriggerMode: 'hybrid' })
+      })
+      expect(voiceBtn.textContent).toContain('轻点常开 · 按住说')
+      fireEvent.pointerDown(voiceBtn, { pointerId: 34, clientY: 780 })
+      fireEvent.pointerUp(voiceBtn, { pointerId: 34, clientY: 780 })
+      expect(useMobileStore.getState().voiceSessionState).toBe('locked')
+      expect(voiceBtn.textContent).toContain('正在聆听 · 点击结束')
+      fireEvent.pointerDown(voiceBtn, { pointerId: 35, clientY: 780 })
+      expect(useMobileStore.getState().voiceSessionState).toBe('idle')
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: origInnerWidth })
       setVoiceRecordingActive(false)
@@ -416,13 +511,32 @@ describe('Axonkey Mobile Production UX — Zero Demo Remnants, Same-LAN Guidance
       expect(buttonSpy).toHaveBeenCalledWith('middle', 'down', expect.any(String))
       expect(buttonSpy).toHaveBeenCalledWith('middle', 'up', expect.any(String))
 
+      // Air-Mouse Control Pad: Double-tap -> Right Click immediately; toggleable in Pointer Settings
+      buttonSpy.mockClear()
+      const clutchPad = screen.getByTestId('airmouse-clutch-pad')
+      fireEvent.pointerDown(clutchPad, { pointerId: 11, clientX: 140, clientY: 220 })
+      fireEvent.pointerUp(clutchPad, { pointerId: 11, clientX: 140, clientY: 220 })
+      fireEvent.pointerDown(clutchPad, { pointerId: 12, clientX: 142, clientY: 221 })
+      fireEvent.pointerUp(clutchPad, { pointerId: 12, clientX: 142, clientY: 221 })
+      expect(buttonSpy).toHaveBeenCalledWith('right', 'down', expect.any(String))
+      expect(buttonSpy).toHaveBeenCalledWith('right', 'up', expect.any(String))
+
       fireEvent.click(screen.getByLabelText('指针与飞鼠设置'))
       expect(screen.getByRole('dialog', { name: '指针与飞鼠设置' })).toBeTruthy()
+      fireEvent.click(screen.getByText('飞鼠控制板点按'))
+      expect(useMobileStore.getState().localFeel.airMousePadTapClick).toBe(false)
       fireEvent.click(screen.getByText('左 / 右键'))
       expect(setVolumeConfigMock).toHaveBeenLastCalledWith(false, 'lr')
 
       fireEvent.click(screen.getByTestId('pointer-settings-sheet-backdrop'))
       expect(setVolumeConfigMock).toHaveBeenLastCalledWith(true, 'lr')
+
+      buttonSpy.mockClear()
+      fireEvent.pointerDown(clutchPad, { pointerId: 13, clientX: 140, clientY: 220 })
+      fireEvent.pointerUp(clutchPad, { pointerId: 13, clientX: 140, clientY: 220 })
+      fireEvent.pointerDown(clutchPad, { pointerId: 14, clientX: 140, clientY: 220 })
+      fireEvent.pointerUp(clutchPad, { pointerId: 14, clientX: 140, clientY: 220 })
+      expect(buttonSpy).not.toHaveBeenCalled()
 
       buttonSpy.mockClear()
       act(() => {
@@ -445,6 +559,7 @@ describe('Axonkey Mobile Production UX — Zero Demo Remnants, Same-LAN Guidance
       expect(useMobileStore.getState().deck.scrollSensitivity).toBe(1.0)
       expect(useMobileStore.getState().localFeel.gyroSensitivity).toBe(1.2)
       expect(useMobileStore.getState().localFeel.volumeKeyMouseMode).toBe('off')
+      expect(useMobileStore.getState().localFeel.airMousePadTapClick).toBe(true)
       expect(useMobileStore.getState().localFeel.threeFingerSystemGestures).toBe(true)
       expect(screen.getByTestId('hud-toast').textContent).toContain('指针与飞鼠设置已恢复默认')
       fireEvent.click(screen.getByTestId('pointer-settings-sheet-backdrop'))

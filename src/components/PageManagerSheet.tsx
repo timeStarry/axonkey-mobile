@@ -49,6 +49,7 @@ export function PageManagerSheet({ currentPage }: PageManagerSheetProps) {
         <div className="flex items-center gap-2">
           <input
             type="text"
+            aria-label="当前页面名称"
             value={nameDraft}
             maxLength={24}
             onChange={(e) => setNameDraft(e.target.value)}

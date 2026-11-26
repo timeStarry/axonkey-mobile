@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { CornerDownLeft, Keyboard, Mic, Send } from 'lucide-react'
+import { CornerDownLeft, Keyboard, Mic, Send, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { TextCommitMode } from '../protocol/types'
 import { useMobileStore } from '../state/useMobileStore'
-import { isNativeShell, setVoiceRecordingActive, triggerHaptic } from '../transport/nativeBridge'
+import { isNativeShell, triggerHaptic } from '../transport/nativeBridge'
 
 const WAVE_WEIGHTS = [0.35, 0.6, 0.88, 1.0, 0.88, 0.6, 0.35]
 const CANCEL_SLIDE_PX = 42
+const HYBRID_TAP_LOCK_MAX_MS = 220
 
 interface VoiceTextDockProps {
   compactLandscape?: boolean
@@ -14,46 +15,52 @@ interface VoiceTextDockProps {
 
 export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) {
   const dockMode = useMobileStore((s) => s.localFeel.preferredDockMode)
+  const voiceTriggerMode = useMobileStore((s) => s.localFeel.voiceTriggerMode)
   const effectiveTheme = useMobileStore((s) => s.effectiveTheme)
   const updateLocalFeel = useMobileStore((s) => s.updateLocalFeel)
   const sendText = useMobileStore((s) => s.sendText)
-  const getClient = useMobileStore((s) => s.getClient)
+  const beginVoiceCapture = useMobileStore((s) => s.beginVoiceCapture)
+  const promoteVoiceToLocked = useMobileStore((s) => s.promoteVoiceToLocked)
+  const finishVoiceCapture = useMobileStore((s) => s.finishVoiceCapture)
+  const promptDisconnectedAction = useMobileStore((s) => s.promptDisconnectedAction)
+  const showHudToast = useMobileStore((s) => s.showHudToast)
   const phase = useMobileStore((s) => s.phase)
   const voiceLevel = useMobileStore((s) => s.voiceLevel)
+  const voiceSessionState = useMobileStore((s) => s.voiceSessionState)
   const delivery = useMobileStore((s) => s.textDelivery)
 
   const isLight = effectiveTheme === 'light'
 
   const [text, setText] = useState('')
   const [textMode, setTextMode] = useState<TextCommitMode>('paste')
-  const [recording, setRecording] = useState(false)
   const [canceling, setCanceling] = useState(false)
   const [simLevel, setSimLevel] = useState(0.3)
 
-  const startYRef = useRef<number>(0)
-  const cancelingRef = useRef<boolean>(false)
-  const recordingRef = useRef<boolean>(false)
+  const gestureRef = useRef<{
+    pointerId: number | null
+    startY: number
+    downAtMs: number
+    canceling: boolean
+  }>({
+    pointerId: null,
+    startY: 0,
+    downAtMs: 0,
+    canceling: false,
+  })
   const inputRef = useRef<HTMLInputElement | null>(null)
 
   const connected = phase === 'active'
+  const recording = voiceSessionState !== 'idle'
+  const isLocked = voiceSessionState === 'locked'
   const sendDisabled = !connected || !text.trim()
 
   useEffect(() => {
-    if (!connected && recordingRef.current) {
-      recordingRef.current = false
-      cancelingRef.current = false
-      setVoiceRecordingActive(false)
-      setRecording(false)
+    if (!connected && gestureRef.current.pointerId !== null) {
+      gestureRef.current.pointerId = null
+      gestureRef.current.canceling = false
       setCanceling(false)
-      getClient().cancelVoiceStream('disconnected')
     }
-  }, [connected, getClient])
-
-  useEffect(() => {
-    return () => {
-      setVoiceRecordingActive(false)
-    }
-  }, [])
+  }, [connected])
 
   useEffect(() => {
     if (!recording || isNativeShell()) return
@@ -79,54 +86,102 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
     }
   }
 
-  const startHoldVoice = (clientY: number) => {
-    if (!connected || recordingRef.current) return
-    const ok = getClient().startVoiceStream()
-    if (!ok) {
-      triggerHaptic('error')
+  const handleVoicePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!connected) {
+      promptDisconnectedAction()
       return
     }
-    startYRef.current = clientY
-    cancelingRef.current = false
-    recordingRef.current = true
-    setVoiceRecordingActive(true)
+
+    const curState = useMobileStore.getState().voiceSessionState
+    if (curState === 'locked') {
+      gestureRef.current.pointerId = null
+      gestureRef.current.canceling = false
+      setCanceling(false)
+      finishVoiceCapture(false)
+      return
+    }
+
+    if (curState !== 'idle') return
+
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+    const initialMode = voiceTriggerMode === 'toggle' ? 'locked' : 'holding'
+    const ok = beginVoiceCapture(initialMode)
+    if (!ok) return
+
+    gestureRef.current = {
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      downAtMs: performance.now(),
+      canceling: false,
+    }
     setCanceling(false)
-    setRecording(true)
-    triggerHaptic('voiceStart')
   }
 
-  const moveHoldVoice = (clientY: number) => {
-    if (!recordingRef.current) return
-    const shouldCancel = startYRef.current - clientY >= CANCEL_SLIDE_PX
-    if (shouldCancel !== cancelingRef.current) {
-      cancelingRef.current = shouldCancel
+  const handleVoicePointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (gestureRef.current.pointerId !== e.pointerId) return
+    if (useMobileStore.getState().voiceSessionState !== 'holding') return
+
+    const shouldCancel = gestureRef.current.startY - e.clientY >= CANCEL_SLIDE_PX
+    if (shouldCancel !== gestureRef.current.canceling) {
+      gestureRef.current.canceling = shouldCancel
       setCanceling(shouldCancel)
       triggerHaptic('tap')
     }
   }
 
-  const finishHoldVoice = (forceCancel = false) => {
-    if (!recordingRef.current) return
-    const wasCanceling = forceCancel || cancelingRef.current
-    recordingRef.current = false
-    cancelingRef.current = false
-    setVoiceRecordingActive(false)
-    setRecording(false)
+  const handleVoicePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (gestureRef.current.pointerId !== e.pointerId) return
+    const g = { ...gestureRef.current }
+    gestureRef.current.pointerId = null
+    gestureRef.current.canceling = false
     setCanceling(false)
 
-    if (wasCanceling) {
-      triggerHaptic('error')
-      getClient().cancelVoiceStream('user_cancelled')
-    } else {
-      triggerHaptic('voiceStop')
-      getClient().stopVoiceStream()
+    const curState = useMobileStore.getState().voiceSessionState
+    if (curState === 'locked') {
+      // Initial tap in 'toggle' mode just lifted — stay continuously listening!
+      return
     }
+    if (curState !== 'holding') return
+
+    if (g.canceling) {
+      finishVoiceCapture(true)
+      return
+    }
+
+    const elapsed = performance.now() - g.downAtMs
+    if (voiceTriggerMode === 'hybrid' && elapsed < HYBRID_TAP_LOCK_MAX_MS) {
+      promoteVoiceToLocked()
+      return
+    }
+
+    finishVoiceCapture(false)
+  }
+
+  const handleVoicePointerCancel = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (gestureRef.current.pointerId !== e.pointerId) return
+    gestureRef.current.pointerId = null
+    gestureRef.current.canceling = false
+    setCanceling(false)
+    if (useMobileStore.getState().voiceSessionState === 'holding') {
+      finishVoiceCapture(true)
+    }
+  }
+
+  const handleCancelLockedVoice = () => {
+    gestureRef.current.pointerId = null
+    gestureRef.current.canceling = false
+    setCanceling(false)
+    finishVoiceCapture(true)
+    showHudToast('已取消本次语音', { tone: 'amber', durationMs: 1400 })
   }
 
   const toggleDockMode = () => {
     triggerHaptic('tap')
-    if (recordingRef.current) {
-      finishHoldVoice(true)
+    if (useMobileStore.getState().voiceSessionState !== 'idle') {
+      gestureRef.current.pointerId = null
+      gestureRef.current.canceling = false
+      setCanceling(false)
+      finishVoiceCapture(true)
     }
     const next = dockMode === 'voice' ? 'text' : 'voice'
     updateLocalFeel({ preferredDockMode: next })
@@ -134,6 +189,15 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
       setTimeout(() => inputRef.current?.focus(), 40)
     }
   }
+
+  const idleVoiceLabel =
+    voiceTriggerMode === 'toggle'
+      ? '点击说话'
+      : voiceTriggerMode === 'hybrid'
+        ? compactLandscape
+          ? '轻点/按住说'
+          : '轻点常开 · 按住说'
+        : '按住说话'
 
   if (compactLandscape) {
     return (
@@ -144,23 +208,21 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
               type="button"
               onClick={toggleDockMode}
               aria-label="切换到键盘输入"
-              className="tile-surface ak-elevated ak-text-2 w-10 h-11 rounded-[16px] border inline-flex items-center justify-center shrink-0 touch-none"
+              className="tile-surface ak-elevated ak-text-2 w-9 h-11 rounded-[16px] border inline-flex items-center justify-center shrink-0 touch-none"
             >
               <Keyboard className="w-4 h-4" />
             </button>
 
             <button
               type="button"
-              disabled={!connected}
-              onPointerDown={(e) => {
-                e.currentTarget.setPointerCapture?.(e.pointerId)
-                startHoldVoice(e.clientY)
-              }}
-              onPointerMove={(e) => moveHoldVoice(e.clientY)}
-              onPointerUp={() => finishHoldVoice(false)}
-              onPointerCancel={() => finishHoldVoice(true)}
+              data-testid="voice-trigger-btn"
+              aria-disabled={!connected}
+              onPointerDown={handleVoicePointerDown}
+              onPointerMove={handleVoicePointerMove}
+              onPointerUp={handleVoicePointerUp}
+              onPointerCancel={handleVoicePointerCancel}
               className={clsx(
-                'relative flex-1 h-11 px-2.5 rounded-[16px] border text-xs font-semibold inline-flex items-center justify-center gap-1.5 select-none touch-none transition-all',
+                'relative flex-1 min-w-0 h-11 px-2.5 rounded-[16px] border text-xs font-semibold inline-flex items-center justify-center gap-1.5 select-none touch-none transition-all',
                 !connected
                   ? 'ak-pill ak-text-3 opacity-80'
                   : canceling
@@ -183,17 +245,32 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
                   ? '未连接'
                   : canceling
                     ? '松开取消'
-                    : recording
-                      ? '正在聆听 · 松开发送'
-                      : '按住说话'}
+                    : isLocked
+                      ? '聆听中 · 点结束'
+                      : recording
+                        ? '正在聆听 · 松开发送'
+                        : idleVoiceLabel}
               </span>
             </button>
+
+            {connected && isLocked && (
+              <button
+                type="button"
+                data-testid="cancel-locked-voice"
+                aria-label="取消语音"
+                onClick={handleCancelLockedVoice}
+                className="tile-surface w-9 h-11 rounded-[16px] border border-rose-500/35 text-rose-400 inline-flex items-center justify-center shrink-0 active:scale-95 transition-transform"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-1.5">
             <input
               ref={inputRef}
               type="text"
+              aria-label="输入发送给电脑的文字"
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
@@ -283,57 +360,71 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
         </button>
 
         {dockMode === 'voice' ? (
-          <button
-            type="button"
-            disabled={!connected}
-            onPointerDown={(e) => {
-              e.currentTarget.setPointerCapture?.(e.pointerId)
-              startHoldVoice(e.clientY)
-            }}
-            onPointerMove={(e) => moveHoldVoice(e.clientY)}
-            onPointerUp={() => finishHoldVoice(false)}
-            onPointerCancel={() => finishHoldVoice(true)}
-            className={clsx(
-              'relative flex-1 h-[52px] px-4 rounded-[18px] border text-[13px] font-semibold inline-flex items-center justify-center gap-2.5 select-none touch-none transition-all overflow-hidden',
-              !connected
-                ? 'ak-pill ak-text-3 opacity-80'
-                : canceling
-                  ? 'bg-rose-500 text-white border-rose-500 scale-[0.985]'
-                  : recording
-                    ? 'ak-primary-solid scale-[0.985]'
-                    : 'tile-surface ak-voice-idle',
+          <>
+            <button
+              type="button"
+              data-testid="voice-trigger-btn"
+              aria-disabled={!connected}
+              onPointerDown={handleVoicePointerDown}
+              onPointerMove={handleVoicePointerMove}
+              onPointerUp={handleVoicePointerUp}
+              onPointerCancel={handleVoicePointerCancel}
+              className={clsx(
+                'relative flex-1 min-w-0 h-[52px] px-4 rounded-[18px] border text-[13px] font-semibold inline-flex items-center justify-center gap-2.5 select-none touch-none transition-all overflow-hidden',
+                !connected
+                  ? 'ak-pill ak-text-3 opacity-80'
+                  : canceling
+                    ? 'bg-rose-500 text-white border-rose-500 scale-[0.985]'
+                    : recording
+                      ? 'ak-primary-solid scale-[0.99]'
+                      : 'tile-surface ak-voice-idle',
+              )}
+            >
+              {!connected ? (
+                <span>未连接</span>
+              ) : canceling ? (
+                <span>松开取消</span>
+              ) : recording ? (
+                <>
+                  <div className="flex items-center gap-[2.5px] h-4 shrink-0" aria-hidden="true">
+                    {WAVE_WEIGHTS.map((w, idx) => {
+                      const barHeight = Math.max(
+                        4,
+                        Math.round(16 * Math.min(1, effectiveLevel * w * 1.25)),
+                      )
+                      return (
+                        <span
+                          key={idx}
+                          style={{ height: `${barHeight}px` }}
+                          className="w-[2.5px] rounded-full bg-current transition-[height] duration-75"
+                        />
+                      )
+                    })}
+                  </div>
+                  <span className="truncate">
+                    {isLocked ? '正在聆听 · 点击结束' : '正在聆听 · 松开发送'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2 h-2 rounded-full ak-live-dot shrink-0" />
+                  <span className="truncate">{idleVoiceLabel}</span>
+                </>
+              )}
+            </button>
+
+            {connected && isLocked && (
+              <button
+                type="button"
+                data-testid="cancel-locked-voice"
+                aria-label="取消语音"
+                onClick={handleCancelLockedVoice}
+                className="tile-surface ak-elevated h-[52px] w-[48px] rounded-[18px] border border-rose-500/35 text-rose-400 inline-flex items-center justify-center shrink-0 active:scale-95 transition-transform"
+              >
+                <X className="w-4 h-4" />
+              </button>
             )}
-          >
-            {!connected ? (
-              <span>未连接</span>
-            ) : canceling ? (
-              <span>松开取消</span>
-            ) : recording ? (
-              <>
-                <div className="flex items-center gap-[2.5px] h-4" aria-hidden="true">
-                  {WAVE_WEIGHTS.map((w, idx) => {
-                    const barHeight = Math.max(
-                      4,
-                      Math.round(16 * Math.min(1, effectiveLevel * w * 1.25)),
-                    )
-                    return (
-                      <span
-                        key={idx}
-                        style={{ height: `${barHeight}px` }}
-                        className="w-[2.5px] rounded-full bg-current transition-[height] duration-75"
-                      />
-                    )
-                  })}
-                </div>
-                <span>正在聆听 · 松开发送</span>
-              </>
-            ) : (
-              <>
-                <span className="w-2 h-2 rounded-full ak-live-dot shrink-0" />
-                <span>按住说话</span>
-              </>
-            )}
-          </button>
+          </>
         ) : (
           <>
             <button
@@ -351,6 +442,7 @@ export function VoiceTextDock({ compactLandscape = false }: VoiceTextDockProps) 
             <input
               ref={inputRef}
               type="text"
+              aria-label="输入发送给电脑的文字"
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {

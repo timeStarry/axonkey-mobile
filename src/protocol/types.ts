@@ -93,6 +93,7 @@ export type VoicePresetKind = 'doubao-alt' | 'system-win-h' | 'ctrl-win' | 'pure
 export type VolumeKeyMouseMode = 'off' | 'lr' | 'rl' | 'scroll'
 export type ScreenOrientationMode = 'portrait' | 'landscape' | 'system'
 export type AirMouseHandedness = 'right' | 'left'
+export type VoiceTriggerMode = 'hold' | 'toggle' | 'hybrid'
 
 export interface MobileTile {
   id: string

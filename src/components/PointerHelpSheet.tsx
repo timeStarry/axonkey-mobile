@@ -11,6 +11,7 @@ const TOUCHPAD_GESTURES: readonly { gesture: string; action: string }[] = [
 
 const AIRMOUSE_TIPS: readonly { gesture: string; action: string }[] = [
   { gesture: '惯性飞鼠', action: '按住下方感应区挥腕移鼠，松手悬停防抖' },
+  { gesture: '控制板点按', action: '轻点左键 · 双击右键（可在指针设置开关）' },
   { gesture: '激光飞鼠', action: '如激光笔实时指向屏幕，偏离时点「归中」' },
   { gesture: '侧边刻度条', action: '上下滑动步进滚轮，轻点触发鼠标中键' },
   { gesture: '实体音量键', action: '可在「指针设置」中映射为左右键或滚轮' },

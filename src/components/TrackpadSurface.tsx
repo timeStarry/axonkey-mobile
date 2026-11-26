@@ -11,6 +11,7 @@ import {
   SlidersHorizontal,
 } from 'lucide-react'
 import { clsx } from 'clsx'
+import { AirMousePadController } from '../input/airMousePad'
 import { TrackpadController } from '../input/trackpad'
 import type { PointerButtonName } from '../protocol/types'
 import {
@@ -23,6 +24,7 @@ import {
   recenterNativeCursor,
   setNativeGyroClutch,
   setNativeGyroConfig,
+  triggerControlFeedback,
   triggerHaptic,
 } from '../transport/nativeBridge'
 
@@ -49,6 +51,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
   const effectiveTheme = useMobileStore((s) => s.effectiveTheme)
   const gyroSensitivity = useMobileStore((s) => s.localFeel.gyroSensitivity)
   const airMouseHandedness = useMobileStore((s) => s.localFeel.airMouseHandedness)
+  const airMousePadTapClick = useMobileStore((s) => s.localFeel.airMousePadTapClick)
   const threeFingerSystemGestures = useMobileStore(
     (s) => s.localFeel.threeFingerSystemGestures,
   )
@@ -65,6 +68,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
   const [clutchHeld, setClutchHeld] = useState(false)
   const [laserPaused, setLaserPaused] = useState(false)
   const [recenteredFlash, setRecenteredFlash] = useState(false)
+  const [padClickFlash, setPadClickFlash] = useState<'left' | 'right' | null>(null)
   const [pressedButtons, setPressedButtons] = useState<Record<string, boolean>>({})
   const [railOffsetTick, setRailOffsetTick] = useState(0)
 
@@ -85,6 +89,57 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
     scrollResidual: 0,
   })
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const padFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleRecenterRef = useRef<() => void>(() => {})
+
+  const airMousePadRef = useRef<AirMousePadController | null>(null)
+  if (!airMousePadRef.current) {
+    airMousePadRef.current = new AirMousePadController({
+      onStabilizePulse: () => {
+        notifyNativePointerClickPulse()
+      },
+      onClutchChange: (engaged) => {
+        setClutchHeld(engaged)
+        if (engaged) {
+          const cur = useMobileStore.getState()
+          if (cur.phase !== 'active') {
+            cur.promptDisconnectedAction()
+            return
+          }
+          triggerControlFeedback('tap')
+          setNativeGyroConfig('relative', cur.localFeel.gyroSensitivity)
+          setNativeGyroClutch(true)
+        } else {
+          setNativeGyroClutch(false)
+        }
+      },
+      onClick: (button) => {
+        const cur = useMobileStore.getState()
+        if (cur.phase !== 'active') {
+          cur.promptDisconnectedAction()
+          return
+        }
+        notifyNativePointerClickPulse()
+        triggerControlFeedback(button === 'right' ? 'confirm' : 'tap')
+        const pressId = nextManualPressId(button)
+        getClient().sendPointerButton(button, 'down', pressId)
+        getClient().sendPointerButton(button, 'up', pressId)
+        setPadClickFlash(button)
+        if (padFlashTimerRef.current) clearTimeout(padFlashTimerRef.current)
+        padFlashTimerRef.current = setTimeout(() => {
+          setPadClickFlash(null)
+          padFlashTimerRef.current = null
+        }, 150)
+      },
+      onFallbackTapWhenDisabled: () => {
+        handleRecenterRef.current()
+      },
+    })
+  }
+  airMousePadRef.current.configure({
+    tapClickEnabled: airMousePadTapClick,
+    clutchMode: airMouseFeel === 'relative' ? 'hold' : 'none',
+  })
 
   const controllerRef = useRef<TrackpadController | null>(null)
   if (!controllerRef.current) {
@@ -96,12 +151,12 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
         getClient().sendPointerScroll(x, y)
       },
       onButton: (button, btnPhase, pressId) => {
-        if (btnPhase === 'down') triggerHaptic('tap')
+        if (btnPhase === 'down') triggerControlFeedback('tap')
         getClient().sendPointerButton(button, btnPhase, pressId)
       },
       onSystemGesture: (gesture) => {
         if (!useMobileStore.getState().localFeel.threeFingerSystemGestures) return
-        triggerHaptic('confirm')
+        triggerControlFeedback('confirm')
         getClient().sendTouchpadGesture(gesture)
       },
     })
@@ -136,10 +191,13 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
 
   useEffect(() => {
     const ctrl = controllerRef.current
+    const airPad = airMousePadRef.current
     const manualMap = heldManualButtons.current
     return () => {
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+      if (padFlashTimerRef.current) clearTimeout(padFlashTimerRef.current)
       ctrl?.cancelAll()
+      airPad?.cancelAll()
       setNativeGyroClutch(false)
       setNativeGyroConfig('off', 1.0)
       for (const [btn, pressId] of manualMap.entries()) {
@@ -151,6 +209,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
 
   const releaseAllHeldButtons = () => {
     controllerRef.current?.cancelAll()
+    airMousePadRef.current?.cancelAll()
     setDragLocked(false)
     edgeRailStateRef.current.active = false
     for (const [btn, pressId] of heldManualButtons.current.entries()) {
@@ -172,6 +231,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
   const handleAirMouseFeelSelect = (nextFeel: AirMouseFeelMode) => {
     if (nextFeel === airMouseFeel) return
     triggerHaptic('tap')
+    airMousePadRef.current?.cancelAll()
     setClutchHeld(false)
     setLaserPaused(false)
     setAirMouseFeel(nextFeel)
@@ -199,12 +259,16 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
     const next = !dragLocked
     setDragLocked(next)
     controllerRef.current?.setButton('left', next)
-    triggerHaptic(next ? 'heavy' : 'tap')
+    triggerControlFeedback(next ? 'heavy' : 'tap')
     showHudToast(next ? '左键拖拽已锁定 · 滑动即可移窗' : '左键拖拽已解除')
   }
 
   const handlePhysicalButton = (button: PointerButtonName, down: boolean) => {
     setPressedButtons((prev) => ({ ...prev, [button]: down }))
+    if (down && useMobileStore.getState().phase !== 'active') {
+      useMobileStore.getState().promptDisconnectedAction()
+      return
+    }
     if (pointerTab === 'trackpad') {
       controllerRef.current?.setButton(button, down)
       return
@@ -212,7 +276,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
     if (down) {
       if (heldManualButtons.current.has(button)) return
       notifyNativePointerClickPulse()
-      triggerHaptic('tap')
+      triggerControlFeedback('tap')
       const pressId = nextManualPressId(button)
       heldManualButtons.current.set(button, pressId)
       getClient().sendPointerButton(button, 'down', pressId)
@@ -226,6 +290,10 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
 
   const handleEdgeRailDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.currentTarget.setPointerCapture?.(e.pointerId)
+    if (useMobileStore.getState().phase !== 'active') {
+      useMobileStore.getState().promptDisconnectedAction()
+      return
+    }
     edgeRailStateRef.current = {
       active: true,
       lastY: e.clientY,
@@ -249,7 +317,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
     if (Math.abs(st.notchAccumPx) >= ENCODER_NOTCH_PX) {
       const steps = Math.trunc(st.notchAccumPx / ENCODER_NOTCH_PX)
       st.notchAccumPx -= steps * ENCODER_NOTCH_PX
-      triggerHaptic('detent')
+      triggerControlFeedback('detent')
       setRailOffsetTick((n) => (n + steps) % 4)
     }
 
@@ -281,7 +349,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
     const elapsed = performance.now() - st.startMs
     if (elapsed <= 260) {
       notifyNativePointerClickPulse()
-      triggerHaptic('tap')
+      triggerControlFeedback('tap')
       const pressId = nextManualPressId('middle')
       getClient().sendPointerButton('middle', 'down', pressId)
       getClient().sendPointerButton('middle', 'up', pressId)
@@ -306,6 +374,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
       flashTimerRef.current = null
     }, 750)
   }
+  handleRecenterRef.current = handleRecenter
 
   const guardBannerText =
     gyroGuard?.kind === 'vertical_guard'
@@ -318,9 +387,14 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
     <div className={clsx('flex flex-col gap-2.5 w-full h-full min-h-[210px] select-none', className)}>
       {/* Minimal Top Bar: [ 触控板 | 飞鼠 ] on left + contextual utility actions & [ 归中 ] on right */}
       <div className="shrink-0 flex items-center justify-between gap-1.5 flex-wrap">
-        <div className="ak-seg inline-flex p-0.5 rounded-[16px] border">
+        <div
+          role="group"
+          aria-label="指针与飞鼠切换"
+          className="ak-seg inline-flex p-0.5 rounded-[16px] border"
+        >
           <button
             type="button"
+            aria-pressed={pointerTab === 'trackpad'}
             onClick={() => handleTabSelect('trackpad')}
             className={clsx(
               'h-8 px-3 rounded-[13px] text-xs font-medium transition-colors',
@@ -331,6 +405,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
           </button>
           <button
             type="button"
+            aria-pressed={pointerTab === 'airmouse'}
             onClick={() => handleTabSelect('airmouse')}
             className={clsx(
               'h-8 px-3 rounded-[13px] text-xs font-medium transition-colors',
@@ -344,9 +419,14 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
         <div className="flex items-center gap-1.5">
           {pointerTab === 'airmouse' ? (
             <>
-              <div className="ak-seg inline-flex p-0.5 rounded-[14px] border">
+              <div
+                role="group"
+                aria-label="飞鼠追踪模式"
+                className="ak-seg inline-flex p-0.5 rounded-[14px] border"
+              >
                 <button
                   type="button"
+                  aria-pressed={airMouseFeel === 'relative'}
                   onClick={() => handleAirMouseFeelSelect('relative')}
                   className={clsx(
                     'h-7 px-2.5 rounded-[11px] text-[11px] font-medium transition-colors',
@@ -357,6 +437,7 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
                 </button>
                 <button
                   type="button"
+                  aria-pressed={airMouseFeel === 'laser'}
                   onClick={() => handleAirMouseFeelSelect('laser')}
                   className={clsx(
                     'h-7 px-2.5 rounded-[11px] text-[11px] font-medium transition-colors',
@@ -371,10 +452,11 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
                 type="button"
                 onClick={handleToggleHandedness}
                 aria-label="切换飞鼠左右手握持"
+                aria-description={airMouseHandedness === 'left' ? '当前左手握持' : '当前右手握持'}
                 title={airMouseHandedness === 'left' ? '左手握持' : '右手握持'}
                 className="tile-surface ak-elevated ak-text-2 h-8 w-8 rounded-[14px] border inline-flex items-center justify-center"
               >
-                <ArrowLeftRight className="w-3.5 h-3.5" />
+                <ArrowLeftRight className="w-3.5 h-3.5" aria-hidden="true" />
               </button>
             </>
           ) : (
@@ -382,12 +464,17 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
               type="button"
               onClick={toggleDragLock}
               aria-label="拖拽锁定"
+              aria-pressed={dragLocked}
               className={clsx(
                 'tile-surface h-8 w-8 rounded-[14px] border inline-flex items-center justify-center transition-colors',
                 dragLocked ? 'ak-primary-solid' : 'ak-elevated ak-text-2',
               )}
             >
-              {dragLocked ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />}
+              {dragLocked ? (
+                <Lock className="w-3.5 h-3.5" aria-hidden="true" />
+              ) : (
+                <LockOpen className="w-3.5 h-3.5" aria-hidden="true" />
+              )}
             </button>
           )}
 
@@ -449,10 +536,16 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
       {pointerTab === 'trackpad' && (
         <>
           <div
+            role="region"
+            aria-label="触控板区域：单指滑动移动光标，单指轻点左键，双指轻点右键，双指滑动滚轮"
             data-testid="standalone-trackpad-surface"
             className="trackpad-dots ak-border-subtle relative flex-1 rounded-[28px] border touch-none select-none overflow-hidden flex items-center justify-center"
             onPointerDown={(e) => {
               e.currentTarget.setPointerCapture?.(e.pointerId)
+              if (useMobileStore.getState().phase !== 'active') {
+                useMobileStore.getState().promptDisconnectedAction()
+                return
+              }
               controllerRef.current?.onPointerDown(e.pointerId, e.clientX, e.clientY)
             }}
             onPointerMove={(e) => {
@@ -577,26 +670,28 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
             {airMouseFeel === 'relative' ? (
               <button
                 type="button"
+                aria-label="惯性飞鼠控制板：按住挥腕移鼠，轻点左键，双击右键"
+                data-testid="airmouse-clutch-pad"
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture?.(e.pointerId)
-                  setClutchHeld(true)
-                  triggerHaptic('tap')
-                  if (phase === 'active') {
-                    setNativeGyroConfig('relative', gyroSensitivity)
-                    setNativeGyroClutch(true)
-                  }
+                  airMousePadRef.current?.onPointerDown(e.pointerId, e.clientX, e.clientY)
                 }}
-                onPointerUp={() => {
-                  setClutchHeld(false)
-                  setNativeGyroClutch(false)
+                onPointerMove={(e) => {
+                  airMousePadRef.current?.onPointerMove(e.pointerId, e.clientX, e.clientY)
                 }}
-                onPointerCancel={() => {
-                  setClutchHeld(false)
-                  setNativeGyroClutch(false)
+                onPointerUp={(e) => {
+                  airMousePadRef.current?.onPointerUp(e.pointerId)
+                }}
+                onPointerCancel={(e) => {
+                  airMousePadRef.current?.onPointerCancel(e.pointerId)
                 }}
                 className={clsx(
                   'relative flex-1 min-h-[120px] rounded-[28px] border flex flex-col items-center justify-center gap-2 touch-none transition-all',
-                  clutchHeld ? 'ak-clutch-engaged scale-[0.985]' : 'chassis-well',
+                  clutchHeld
+                    ? 'ak-clutch-engaged scale-[0.985]'
+                    : padClickFlash
+                      ? 'ak-elevated-alt scale-[0.99]'
+                      : 'chassis-well',
                 )}
               >
                 <span
@@ -610,9 +705,15 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
                 </span>
               </button>
             ) : (
-              <div className="chassis-well relative flex-1 min-h-[120px] rounded-[28px] border flex flex-col items-center justify-center">
+              <div
+                className={clsx(
+                  'relative flex-1 min-h-[120px] rounded-[28px] border flex flex-col items-center justify-center transition-all',
+                  padClickFlash ? 'ak-elevated-alt scale-[0.99]' : 'chassis-well',
+                )}
+              >
                 <button
                   type="button"
+                  onPointerDown={(e) => e.stopPropagation()}
                   onClick={() => {
                     triggerHaptic('tap')
                     const nextPaused = !laserPaused
@@ -620,14 +721,28 @@ export function TrackpadSurface({ className }: TrackpadSurfaceProps) {
                     showHudToast(nextPaused ? '激光追踪已暂停' : '激光追踪已恢复')
                   }}
                   aria-label={laserPaused ? '恢复追踪' : '暂停追踪'}
-                  className="ak-elevated ak-text-2 absolute top-3 right-3 w-8 h-8 rounded-full border inline-flex items-center justify-center"
+                  className="ak-elevated ak-text-2 absolute top-3 right-3 z-10 w-8 h-8 rounded-full border inline-flex items-center justify-center"
                 >
                   {laserPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
                 </button>
 
                 <button
                   type="button"
-                  onClick={handleRecenter}
+                  aria-label="激光飞鼠控制板：实时指向屏幕，轻点左键，双击右键"
+                  data-testid="airmouse-laser-pad"
+                  onPointerDown={(e) => {
+                    e.currentTarget.setPointerCapture?.(e.pointerId)
+                    airMousePadRef.current?.onPointerDown(e.pointerId, e.clientX, e.clientY)
+                  }}
+                  onPointerMove={(e) => {
+                    airMousePadRef.current?.onPointerMove(e.pointerId, e.clientX, e.clientY)
+                  }}
+                  onPointerUp={(e) => {
+                    airMousePadRef.current?.onPointerUp(e.pointerId)
+                  }}
+                  onPointerCancel={(e) => {
+                    airMousePadRef.current?.onPointerCancel(e.pointerId)
+                  }}
                   className="w-full h-full rounded-[28px] flex flex-col items-center justify-center gap-2 touch-none"
                 >
                   <span

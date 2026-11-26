@@ -206,6 +206,7 @@ class MainActivity : ComponentActivity() {
             .build()
 
         webView = WebView(this).apply {
+            importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_YES
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false

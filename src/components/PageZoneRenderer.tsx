@@ -23,6 +23,7 @@ import {
   packBentoTiles,
   reorderTileIds,
 } from '../input/bentoLayout'
+import { AirMousePadController } from '../input/airMousePad'
 import { TileGestureController } from '../input/tileGesture'
 import { TrackpadController } from '../input/trackpad'
 import type {
@@ -44,6 +45,7 @@ import {
   recenterNativeCursor,
   setNativeGyroClutch,
   setNativeGyroConfig,
+  triggerControlFeedback,
   triggerHaptic,
   type HapticKind,
 } from '../transport/nativeBridge'
@@ -126,6 +128,7 @@ function EmbeddedPointerPad({
   const getClient = useMobileStore((s) => s.getClient)
   const phase = useMobileStore((s) => s.phase)
   const gyroSensitivity = useMobileStore((s) => s.localFeel.gyroSensitivity)
+  const airMousePadTapClick = useMobileStore((s) => s.localFeel.airMousePadTapClick)
   const threeFingerSystemGestures = useMobileStore(
     (s) => s.localFeel.threeFingerSystemGestures,
   )
@@ -148,6 +151,46 @@ function EmbeddedPointerPad({
   const scrollClutchYRef = useRef<number | null>(null)
   const scrollResidualRef = useRef<number>(0)
 
+  const airMousePadRef = useRef<AirMousePadController | null>(null)
+  if (!airMousePadRef.current) {
+    airMousePadRef.current = new AirMousePadController({
+      onStabilizePulse: () => {
+        notifyNativePointerClickPulse()
+      },
+      onClutchChange: (engaged) => {
+        setClutchHeld(engaged)
+        if (engaged) {
+          const cur = useMobileStore.getState()
+          if (cur.phase !== 'active') {
+            cur.promptDisconnectedAction()
+            return
+          }
+          triggerControlFeedback('tap')
+          setNativeGyroConfig('relative', cur.localFeel.gyroSensitivity)
+          setNativeGyroClutch(true)
+        } else {
+          setNativeGyroClutch(false)
+        }
+      },
+      onClick: (button) => {
+        const cur = useMobileStore.getState()
+        if (cur.phase !== 'active') {
+          cur.promptDisconnectedAction()
+          return
+        }
+        notifyNativePointerClickPulse()
+        triggerControlFeedback(button === 'right' ? 'confirm' : 'tap')
+        const pressId = nextEmbeddedPressId(button)
+        getClient().sendPointerButton(button, 'down', pressId)
+        getClient().sendPointerButton(button, 'up', pressId)
+      },
+    })
+  }
+  airMousePadRef.current.configure({
+    tapClickEnabled: airMousePadTapClick,
+    clutchMode: 'hold',
+  })
+
   const controllerRef = useRef<TrackpadController | null>(null)
   if (!controllerRef.current) {
     controllerRef.current = new TrackpadController({
@@ -158,12 +201,12 @@ function EmbeddedPointerPad({
         getClient().sendPointerScroll(x, y)
       },
       onButton: (button, btnPhase, pressId) => {
-        if (btnPhase === 'down') triggerHaptic('tap')
+        if (btnPhase === 'down') triggerControlFeedback('tap')
         getClient().sendPointerButton(button, btnPhase, pressId)
       },
       onSystemGesture: (gesture) => {
         if (!useMobileStore.getState().localFeel.threeFingerSystemGestures) return
-        triggerHaptic('confirm')
+        triggerControlFeedback('confirm')
         getClient().sendTouchpadGesture(gesture)
       },
     })
@@ -197,6 +240,7 @@ function EmbeddedPointerPad({
   useEffect(() => {
     if (editMode) {
       controllerRef.current?.cancelAll()
+      airMousePadRef.current?.cancelAll()
       setDragLocked(false)
       setClutchHeld(false)
       setNativeGyroClutch(false)
@@ -210,9 +254,11 @@ function EmbeddedPointerPad({
 
   useEffect(() => {
     const ctrl = controllerRef.current
+    const airPad = airMousePadRef.current
     const manualMap = heldManualButtons.current
     return () => {
       ctrl?.cancelAll()
+      airPad?.cancelAll()
       setNativeGyroClutch(false)
       setNativeGyroConfig('off', 1.0)
       for (const [btn, pressId] of manualMap.entries()) {
@@ -226,6 +272,7 @@ function EmbeddedPointerPad({
     if (nextMode === mode) return
     triggerHaptic('tap')
     controllerRef.current?.cancelAll()
+    airMousePadRef.current?.cancelAll()
     setDragLocked(false)
     setClutchHeld(false)
     setNativeGyroClutch(false)
@@ -242,6 +289,10 @@ function EmbeddedPointerPad({
   const handlePhysicalButton = (button: PointerButtonName, down: boolean) => {
     if (editMode) return
     setPressedButtons((prev) => ({ ...prev, [button]: down }))
+    if (down && useMobileStore.getState().phase !== 'active') {
+      useMobileStore.getState().promptDisconnectedAction()
+      return
+    }
     if (mode === 'trackpad') {
       controllerRef.current?.setButton(button, down)
       return
@@ -249,7 +300,7 @@ function EmbeddedPointerPad({
     if (down) {
       if (heldManualButtons.current.has(button)) return
       notifyNativePointerClickPulse()
-      triggerHaptic('tap')
+      triggerControlFeedback('tap')
       const pressId = nextEmbeddedPressId(button)
       heldManualButtons.current.set(button, pressId)
       getClient().sendPointerButton(button, 'down', pressId)
@@ -299,6 +350,8 @@ function EmbeddedPointerPad({
     <div className="flex flex-col gap-2 select-none">
       {mode === 'trackpad' ? (
         <div
+          role="region"
+          aria-label="内嵌触控板：单指移动光标与轻点左键，双指右键与滚轮"
           data-testid="embedded-trackpad-surface"
           className={clsx(
             'trackpad-dots ak-border-subtle relative flex-1 rounded-[26px] border touch-none select-none overflow-hidden flex items-center justify-center',
@@ -306,6 +359,10 @@ function EmbeddedPointerPad({
           )}
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture?.(e.pointerId)
+            if (useMobileStore.getState().phase !== 'active') {
+              useMobileStore.getState().promptDisconnectedAction()
+              return
+            }
             controllerRef.current?.onPointerDown(e.pointerId, e.clientX, e.clientY)
           }}
           onPointerMove={(e) => {
@@ -324,6 +381,7 @@ function EmbeddedPointerPad({
           >
             <button
               type="button"
+              aria-pressed={true}
               onClick={() => handleModeSwitch('trackpad')}
               className="ak-elevated-alt px-2.5 py-0.5 rounded-full text-[10.5px] font-medium border"
             >
@@ -331,6 +389,7 @@ function EmbeddedPointerPad({
             </button>
             <button
               type="button"
+              aria-pressed={false}
               onClick={() => handleModeSwitch('relative')}
               className="px-2.5 py-0.5 rounded-full text-[10.5px] font-medium ak-text-2"
             >
@@ -357,6 +416,7 @@ function EmbeddedPointerPad({
 
             <button
               type="button"
+              aria-pressed={dragLocked}
               onClick={() => {
                 const next = !dragLocked
                 setDragLocked(next)
@@ -438,22 +498,19 @@ function EmbeddedPointerPad({
 
           <button
             type="button"
+            aria-label="内嵌飞鼠控制板：按住挥腕移鼠，轻点左键，双击右键"
             onPointerDown={(e) => {
               e.currentTarget.setPointerCapture?.(e.pointerId)
-              setClutchHeld(true)
-              triggerHaptic('tap')
-              if (phase === 'active') {
-                setNativeGyroConfig('relative', gyroSensitivity)
-                setNativeGyroClutch(true)
-              }
+              airMousePadRef.current?.onPointerDown(e.pointerId, e.clientX, e.clientY)
             }}
-            onPointerUp={() => {
-              setClutchHeld(false)
-              setNativeGyroClutch(false)
+            onPointerMove={(e) => {
+              airMousePadRef.current?.onPointerMove(e.pointerId, e.clientX, e.clientY)
             }}
-            onPointerCancel={() => {
-              setClutchHeld(false)
-              setNativeGyroClutch(false)
+            onPointerUp={(e) => {
+              airMousePadRef.current?.onPointerUp(e.pointerId)
+            }}
+            onPointerCancel={(e) => {
+              airMousePadRef.current?.onPointerCancel(e.pointerId)
             }}
             className={clsx(
               'flex-1 rounded-[26px] border flex flex-col items-center justify-center gap-2 px-4 pt-4 text-center touch-none transition-all',
@@ -684,7 +741,11 @@ function CircularClickpadZone({
       flashTimerRef.current = null
     }, 180)
 
-    triggerHaptic('detent')
+    if (useMobileStore.getState().phase !== 'active') {
+      useMobileStore.getState().promptDisconnectedAction()
+      return
+    }
+    triggerControlFeedback('detent')
     if (dirTileId) {
       const reqId = getClient().sendTileActivate(dirTileId, 'tap')
       registerPendingTileRequest(reqId, dirTileId)
@@ -1247,11 +1308,15 @@ function GestureTriggerPad({
       flashTimerRef.current = null
     }, 320)
 
-    if (!tile) {
-      triggerHaptic('confirm')
+    if (useMobileStore.getState().phase !== 'active') {
+      useMobileStore.getState().promptDisconnectedAction()
       return
     }
-    triggerHaptic(slotIdx === 5 ? 'confirm' : resolveTileHaptic(tile, 'tap'))
+    if (!tile) {
+      triggerControlFeedback('confirm')
+      return
+    }
+    triggerControlFeedback(slotIdx === 5 ? 'confirm' : resolveTileHaptic(tile, 'tap'))
     const reqId = getClient().sendTileActivate(tile.id, 'tap')
     registerPendingTileRequest(reqId, tile.id)
   }
@@ -1368,6 +1433,7 @@ function GestureTriggerPad({
     <div
       role="application"
       aria-label="手势垫"
+      aria-description={`轻点触发${slotLabel(4)}${hasDoubleTile ? `，双击触发${slotLabel(5)}` : ''}，上滑${slotLabel(0)}，下滑${slotLabel(1)}，左滑${slotLabel(2)}，右滑${slotLabel(3)}`}
       data-testid="gesture-pad-surface"
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture?.(e.pointerId)
@@ -1427,14 +1493,14 @@ function GestureTriggerPad({
           waitingDoubleRef.current = false
           const sector = resolveRadialSectorByDelta(dx, dy)
           if (sector !== g.aimedSlot) {
-            triggerHaptic('detent')
+            triggerControlFeedback('detent')
           }
           g.everAimed = true
           nextAimed = sector
           nextCanceled = false
         } else if (g.everAimed && dist < RADIAL_CANCEL_RETURN_PX) {
           if (g.aimedSlot !== null) {
-            triggerHaptic('detent')
+            triggerControlFeedback('detent')
           }
           nextAimed = null
           nextCanceled = true
@@ -1873,6 +1939,8 @@ function BentoGridZone({
             key={tile.id}
             type="button"
             aria-label={tile.label}
+            aria-description={silkText ? `电脑端动作：${silkText}` : undefined}
+            aria-pressed={editMode ? isSelected : undefined}
             data-bento-tile-id={tile.id}
             data-zone-id={zone.id}
             style={{
@@ -2037,17 +2105,26 @@ export function PageZoneRenderer({ page, compact = false }: PageZoneRendererProp
     controllerRef.current = new TileGestureController(
       {
         onActivate: (tileId, gesture) => {
-          triggerHaptic(resolveTileHaptic(tilesMapRef.current.get(tileId), gesture))
+          if (useMobileStore.getState().phase !== 'active') {
+            useMobileStore.getState().promptDisconnectedAction()
+            return
+          }
+          triggerControlFeedback(resolveTileHaptic(tilesMapRef.current.get(tileId), gesture))
           const reqId = getClient().sendTileActivate(tileId, gesture)
           registerPendingTileRequest(reqId, tileId)
         },
         onHoldBegin: (tileId, pressId) => {
-          triggerHaptic('heavy')
+          if (useMobileStore.getState().phase !== 'active') {
+            useMobileStore.getState().promptDisconnectedAction()
+            return
+          }
+          triggerControlFeedback('heavy')
           const reqId = getClient().sendTileHold(tileId, pressId, true)
           registerPendingTileRequest(reqId, tileId)
         },
         onHoldEnd: (tileId, pressId) => {
-          triggerHaptic('tap')
+          if (useMobileStore.getState().phase !== 'active') return
+          triggerControlFeedback('tap')
           const reqId = getClient().sendTileHold(tileId, pressId, false)
           registerPendingTileRequest(reqId, tileId)
         },
@@ -2082,12 +2159,18 @@ export function PageZoneRenderer({ page, compact = false }: PageZoneRendererProp
   const fbRing = (id: string) => {
     if (editMode) return ''
     const fb = tileFeedback[id]
-    if (!fb || Date.now() - fb.at >= 650) return ''
-    return fb.status === 'ok'
-      ? isLight
-        ? 'ring-1 ring-[#28cd41]'
-        : 'ring-1 ring-[#30d158]/85'
-      : 'ring-2 ring-rose-500/85'
+    if (!fb || Date.now() - fb.at >= 720) return ''
+    if (fb.status === 'ok') {
+      return isLight
+        ? 'ring-1 ring-inset ring-[#28cd41]/85'
+        : 'ring-1 ring-inset ring-[#30d158]/80'
+    }
+    if (fb.status === 'unbound') {
+      return isLight
+        ? 'ring-1 ring-inset ring-amber-500/85 ak-tile-unbound-nudge'
+        : 'ring-1 ring-inset ring-amber-400/80 ak-tile-unbound-nudge'
+    }
+    return 'ring-1 ring-inset ring-rose-500/85 ak-tile-unbound-nudge'
   }
 
   const handleTilePointerDown = (

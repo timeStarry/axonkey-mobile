@@ -4,10 +4,11 @@ import type {
   GyroMode,
   PairingOfferQr,
   ScreenOrientationMode,
+  VoiceTriggerMode,
   VolumeKeyMouseMode,
 } from '../protocol/types'
 
-export type { AirMouseHandedness, ScreenOrientationMode, VolumeKeyMouseMode }
+export type { AirMouseHandedness, ScreenOrientationMode, VoiceTriggerMode, VolumeKeyMouseMode }
 
 export interface AppVersionInfo {
   versionName: string
@@ -83,10 +84,12 @@ export interface LocalFeelPreferences {
   airMouseHandedness: AirMouseHandedness
   volumeKeyMouseMode: VolumeKeyMouseMode
   screenOrientation: ScreenOrientationMode
+  airMousePadTapClick: boolean
   threeFingerSystemGestures: boolean
   hapticsEnabled: boolean
   soundEnabled: boolean
   keepScreenOn: boolean
+  voiceTriggerMode: VoiceTriggerMode
   preferredDockMode: 'voice' | 'text'
 }
 
@@ -188,15 +191,17 @@ export const DEFAULT_LOCAL_FEEL: LocalFeelPreferences = {
   airMouseHandedness: 'right',
   volumeKeyMouseMode: 'off',
   screenOrientation: 'portrait',
+  airMousePadTapClick: true,
   threeFingerSystemGestures: true,
   hapticsEnabled: true,
-  soundEnabled: true,
+  soundEnabled: false,
   keepScreenOn: true,
+  voiceTriggerMode: 'hold',
   preferredDockMode: 'voice',
 }
 
 let hapticsEnabledRuntime = true
-let soundEnabledRuntime = true
+let soundEnabledRuntime = false
 let voiceRecordingRuntime = false
 let webAudioCtx: AudioContext | null = null
 
@@ -269,6 +274,10 @@ export function loadLocalFeelPreferences(): LocalFeelPreferences {
         parsed.screenOrientation === 'system'
           ? parsed.screenOrientation
           : DEFAULT_LOCAL_FEEL.screenOrientation,
+      airMousePadTapClick:
+        typeof parsed.airMousePadTapClick === 'boolean'
+          ? parsed.airMousePadTapClick
+          : DEFAULT_LOCAL_FEEL.airMousePadTapClick,
       threeFingerSystemGestures:
         typeof parsed.threeFingerSystemGestures === 'boolean'
           ? parsed.threeFingerSystemGestures
@@ -285,6 +294,12 @@ export function loadLocalFeelPreferences(): LocalFeelPreferences {
         typeof parsed.keepScreenOn === 'boolean'
           ? parsed.keepScreenOn
           : DEFAULT_LOCAL_FEEL.keepScreenOn,
+      voiceTriggerMode:
+        parsed.voiceTriggerMode === 'hold' ||
+        parsed.voiceTriggerMode === 'toggle' ||
+        parsed.voiceTriggerMode === 'hybrid'
+          ? parsed.voiceTriggerMode
+          : DEFAULT_LOCAL_FEEL.voiceTriggerMode,
       preferredDockMode:
         parsed.preferredDockMode === 'text' || parsed.preferredDockMode === 'voice'
           ? parsed.preferredDockMode
@@ -405,29 +420,49 @@ function playWebClickFallback(kind: HapticKind): void {
     if (webAudioCtx.state === 'suspended') {
       void webAudioCtx.resume()
     }
-    const now = webAudioCtx.currentTime
-    const osc = webAudioCtx.createOscillator()
-    const gain = webAudioCtx.createGain()
-
-    const isDetent = kind === 'detent'
-    const isHeavy = kind === 'heavy'
-    const isConfirm = kind === 'confirm' || kind === 'recenter'
-
-    osc.type = 'triangle'
-    const startFreq = isHeavy ? 1050 : isDetent ? 2500 : isConfirm ? 1850 : 1950
-    const endFreq = isHeavy ? 420 : isDetent ? 1100 : 780
-    const dur = isDetent ? 0.005 : isConfirm ? 0.011 : isHeavy ? 0.009 : 0.0065
-    const peakGain = isDetent ? 0.045 : isHeavy ? 0.08 : 0.065
-
-    osc.frequency.setValueAtTime(startFreq, now)
-    osc.frequency.exponentialRampToValueAtTime(endFreq, now + dur)
-    gain.gain.setValueAtTime(peakGain, now)
-    gain.gain.exponentialRampToValueAtTime(0.0008, now + dur)
-
-    osc.connect(gain)
-    gain.connect(webAudioCtx.destination)
-    osc.start(now)
-    osc.stop(now + dur + 0.001)
+    const sr = webAudioCtx.sampleRate || 48000
+    const dur =
+      kind === 'detent' ? 0.01 : kind === 'confirm' || kind === 'recenter' ? 0.026 : kind === 'heavy' ? 0.022 : 0.015
+    const n = Math.max(32, Math.round(sr * dur))
+    const buf = webAudioCtx.createBuffer(1, n, sr)
+    const ch = buf.getChannelData(0)
+    for (let i = 0; i < n; i += 1) {
+      const t = i / sr
+      let v = 0
+      if (kind === 'detent') {
+        v =
+          (Math.min(i, 8) / 8) *
+          Math.exp(-t / 0.0012) *
+          (0.55 * Math.sin(2 * Math.PI * 2850 * t) + 0.45 * Math.sin(2 * Math.PI * 5200 * t)) *
+          0.76
+      } else if (kind === 'confirm' || kind === 'recenter') {
+        const w1 = Math.exp(-t / 0.0016) * Math.sin(2 * Math.PI * 2400 * t) * 0.68
+        const t2 = t - 0.0058
+        const w2 =
+          t2 >= 0
+            ? Math.exp(-t2 / 0.0022) *
+              (0.6 * Math.sin(2 * Math.PI * 3100 * t2) + 0.4 * Math.sin(2 * Math.PI * 4800 * t2)) *
+              0.86
+            : 0
+        v = w1 + w2
+      } else if (kind === 'heavy') {
+        v =
+          (Math.min(i, 12) / 12) *
+          (Math.exp(-t / 0.0028) * Math.sin(2 * Math.PI * 1350 * t) * 0.75 +
+            Math.exp(-t / 0.0009) * Math.sin(2 * Math.PI * 3900 * t) * 0.4)
+      } else {
+        v =
+          (Math.min(i, 10) / 10) *
+          (0.62 * Math.exp(-t / 0.0018) * Math.sin(2 * Math.PI * 2350 * t) +
+            0.38 * Math.exp(-t / 0.0007) * Math.sin(2 * Math.PI * 4650 * t)) *
+          0.88
+      }
+      ch[i] = Math.max(-1, Math.min(1, v * 0.65))
+    }
+    const src = webAudioCtx.createBufferSource()
+    src.buffer = buf
+    src.connect(webAudioCtx.destination)
+    src.start()
   } catch {
     // Ignore WebAudio restrictions in headless / test environments
   }
@@ -449,9 +484,11 @@ export function triggerClickSound(kind: HapticKind = 'tap'): void {
   }
 }
 
+/**
+ * Pure tactile vibration for UI chrome, navigation, sheets, and layout editing (silent — no click sound).
+ */
 export function triggerHaptic(kind: HapticKind = 'tap'): void {
   if (typeof window === 'undefined') return
-  triggerClickSound(kind)
   if (!hapticsEnabledRuntime) return
   if (window.AxonkeyNative) {
     window.AxonkeyNative.haptic(kind)
@@ -474,6 +511,15 @@ export function triggerHaptic(kind: HapticKind = 'tap'): void {
                   : [25, 40, 25]
     navigator.vibrate(pattern)
   }
+}
+
+/**
+ * Combined acoustic + haptic feedback strictly for active Controller Surfaces
+ * (Bento keycaps, Clickpad ring, Gesture wheel, Touchpad, Air-Mouse triggers & Rotary scroll).
+ */
+export function triggerControlFeedback(kind: HapticKind = 'tap'): void {
+  triggerClickSound(kind)
+  triggerHaptic(kind)
 }
 
 export function setKeepScreenOn(enabled: boolean): void {
@@ -594,8 +640,8 @@ export function setNativeScreenOrientationMode(mode: ScreenOrientationMode): voi
 
 export function getNativeAppVersionInfo(): AppVersionInfo {
   const fallback: AppVersionInfo = {
-    versionName: '0.2.1',
-    versionCode: 3,
+    versionName: '0.2.2',
+    versionCode: 4,
     packageName: 'com.axonkey.mobile',
   }
   if (

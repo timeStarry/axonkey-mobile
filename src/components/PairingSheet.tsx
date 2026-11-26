@@ -171,6 +171,7 @@ export function PairingSheet() {
         <div className="flex items-center gap-1.5 flex-1 max-w-[220px]">
           <input
             type="text"
+            aria-label="本机名称"
             value={nameDraft}
             maxLength={48}
             onChange={(e) => setNameDraft(e.target.value)}
@@ -198,6 +199,7 @@ export function PairingSheet() {
         <div className="flex gap-2">
           <input
             type="text"
+            aria-label="配对口令"
             value={qrInput}
             onChange={(e) => setQrInput(e.target.value)}
             placeholder="粘贴配对口令 JSON…"

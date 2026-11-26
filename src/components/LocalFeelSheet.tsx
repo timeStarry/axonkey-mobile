@@ -6,10 +6,12 @@ import {
   useMobileStore,
   type ScreenOrientationMode,
   type ThemeMode,
+  type VoiceTriggerMode,
 } from '../state/useMobileStore'
 import {
   getDefaultPhoneName,
   getNativeAppVersionInfo,
+  triggerClickSound,
   triggerHaptic,
 } from '../transport/nativeBridge'
 
@@ -22,6 +24,7 @@ export function LocalFeelSheet() {
   const effectiveTheme = useMobileStore((s) => s.effectiveTheme)
   const updateLocalFeel = useMobileStore((s) => s.updateLocalFeel)
   const setThemeMode = useMobileStore((s) => s.setThemeMode)
+  const showHudToast = useMobileStore((s) => s.showHudToast)
 
   const isLight = effectiveTheme === 'light'
   const versionInfo = getNativeAppVersionInfo()
@@ -54,6 +57,12 @@ export function LocalFeelSheet() {
     { id: 'portrait', label: '竖屏手持' },
     { id: 'landscape', label: '横屏台架' },
     { id: 'system', label: '自动旋转' },
+  ]
+
+  const voiceTriggerOptions: { id: VoiceTriggerMode; label: string; tip: string }[] = [
+    { id: 'hold', label: '按住说话', tip: '语音触发：按住说话 · 松开发送' },
+    { id: 'toggle', label: '点击常开', tip: '语音触发：点击开启聆听 · 再点结束' },
+    { id: 'hybrid', label: '智能双模', tip: '语音触发：轻点锁定常开 · 长按松开发送' },
   ]
 
   const switchTrack = (checked: boolean) =>
@@ -90,6 +99,7 @@ export function LocalFeelSheet() {
               <button
                 key={opt.id}
                 type="button"
+                aria-pressed={active}
                 onClick={() => {
                   triggerHaptic('tap')
                   setThemeMode(opt.id)
@@ -120,9 +130,42 @@ export function LocalFeelSheet() {
               <button
                 key={opt.id}
                 type="button"
+                aria-pressed={active}
                 onClick={() => {
                   triggerHaptic('tap')
                   updateLocalFeel({ screenOrientation: opt.id })
+                }}
+                className={clsx(
+                  'h-7 rounded-[11px] text-xs font-medium transition-colors',
+                  active ? 'ak-elevated-alt border' : 'ak-text-2',
+                )}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Voice Trigger Mode */}
+      <div className="flex items-center justify-between gap-3">
+        <span className="ak-text-2 text-xs font-medium shrink-0">语音触发</span>
+        <div
+          role="group"
+          aria-label="语音触发方式"
+          className="ak-seg grid grid-cols-3 gap-1 p-0.5 rounded-[14px] border w-[204px]"
+        >
+          {voiceTriggerOptions.map((opt) => {
+            const active = localFeel.voiceTriggerMode === opt.id
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => {
+                  triggerHaptic('tap')
+                  updateLocalFeel({ voiceTriggerMode: opt.id })
+                  showHudToast(opt.tip)
                 }}
                 className={clsx(
                   'h-7 rounded-[11px] text-xs font-medium transition-colors',
@@ -144,6 +187,7 @@ export function LocalFeelSheet() {
         <div className="flex items-center gap-1.5 w-[204px]">
           <input
             type="text"
+            aria-label="本机名称"
             value={nameDraft}
             maxLength={48}
             onChange={(e) => setNameDraft(e.target.value)}
@@ -171,6 +215,8 @@ export function LocalFeelSheet() {
       <div className="ak-well rounded-[18px] border divide-y divide-black/[0.04] dark:divide-white/[0.05]">
         <button
           type="button"
+          role="switch"
+          aria-checked={localFeel.hapticsEnabled}
           onClick={() => {
             const next = !localFeel.hapticsEnabled
             updateLocalFeel({ hapticsEnabled: next })
@@ -179,28 +225,37 @@ export function LocalFeelSheet() {
           className="w-full h-11 px-3.5 flex items-center justify-between text-xs"
         >
           <span className="ak-text-1 font-medium">触觉振动</span>
-          <span className={switchTrack(localFeel.hapticsEnabled)}>
+          <span aria-hidden="true" className={switchTrack(localFeel.hapticsEnabled)}>
             <span className="w-5 h-5 rounded-full bg-white shadow-xs" />
           </span>
         </button>
 
         <button
           type="button"
+          role="switch"
+          aria-checked={localFeel.soundEnabled}
           onClick={() => {
             const next = !localFeel.soundEnabled
             updateLocalFeel({ soundEnabled: next })
-            if (next) triggerHaptic('confirm')
+            if (next) {
+              triggerClickSound('confirm')
+              triggerHaptic('confirm')
+            } else {
+              triggerHaptic('tap')
+            }
           }}
           className="w-full h-11 px-3.5 flex items-center justify-between text-xs"
         >
           <span className="ak-text-1 font-medium">按键提示音</span>
-          <span className={switchTrack(localFeel.soundEnabled)}>
+          <span aria-hidden="true" className={switchTrack(localFeel.soundEnabled)}>
             <span className="w-5 h-5 rounded-full bg-white shadow-xs" />
           </span>
         </button>
 
         <button
           type="button"
+          role="switch"
+          aria-checked={localFeel.keepScreenOn}
           onClick={() => {
             triggerHaptic('tap')
             updateLocalFeel({ keepScreenOn: !localFeel.keepScreenOn })
@@ -208,7 +263,7 @@ export function LocalFeelSheet() {
           className="w-full h-11 px-3.5 flex items-center justify-between text-xs"
         >
           <span className="ak-text-1 font-medium">连接时屏幕常亮</span>
-          <span className={switchTrack(localFeel.keepScreenOn)}>
+          <span aria-hidden="true" className={switchTrack(localFeel.keepScreenOn)}>
             <span className="w-5 h-5 rounded-full bg-white shadow-xs" />
           </span>
         </button>

@@ -31,6 +31,7 @@ export function PointerSettingsSheet() {
     localFeel.preferredPointerTab === DEFAULT_LOCAL_FEEL.preferredPointerTab &&
     localFeel.airMouseFeel === DEFAULT_LOCAL_FEEL.airMouseFeel &&
     localFeel.airMouseHandedness === DEFAULT_LOCAL_FEEL.airMouseHandedness &&
+    localFeel.airMousePadTapClick === DEFAULT_LOCAL_FEEL.airMousePadTapClick &&
     localFeel.threeFingerSystemGestures === DEFAULT_LOCAL_FEEL.threeFingerSystemGestures
 
   const handleResetDefaults = () => {
@@ -103,6 +104,8 @@ export function PointerSettingsSheet() {
           </div>
           <input
             type="range"
+            aria-label="触控板速度"
+            aria-valuetext={`${deck.pointerSensitivity.toFixed(1)} 倍`}
             min={0.4}
             max={3.0}
             step={0.1}
@@ -121,6 +124,8 @@ export function PointerSettingsSheet() {
           </div>
           <input
             type="range"
+            aria-label="滚轮速度"
+            aria-valuetext={`${deck.scrollSensitivity.toFixed(1)} 倍`}
             min={0.4}
             max={3.0}
             step={0.1}
@@ -139,6 +144,8 @@ export function PointerSettingsSheet() {
           </div>
           <input
             type="range"
+            aria-label="飞鼠灵敏度"
+            aria-valuetext={`${localFeel.gyroSensitivity.toFixed(1)} 倍`}
             min={0.4}
             max={3.0}
             step={0.1}
@@ -168,6 +175,7 @@ export function PointerSettingsSheet() {
               <button
                 key={opt.id}
                 type="button"
+                aria-pressed={active}
                 onClick={() => {
                   triggerHaptic('tap')
                   updateLocalFeel({ volumeKeyMouseMode: opt.id })
@@ -189,13 +197,18 @@ export function PointerSettingsSheet() {
       <div className="space-y-1.5">
         <span className="ak-text-2 text-xs font-medium block">默认子模式</span>
         <div className="grid grid-cols-2 gap-2">
-          <div className="ak-seg grid grid-cols-2 gap-1 p-0.5 rounded-[14px] border">
+          <div
+            role="group"
+            aria-label="默认指针子页"
+            className="ak-seg grid grid-cols-2 gap-1 p-0.5 rounded-[14px] border"
+          >
             {pointerTabOptions.map((opt) => {
               const active = localFeel.preferredPointerTab === opt.id
               return (
                 <button
                   key={opt.id}
                   type="button"
+                  aria-pressed={active}
                   onClick={() => {
                     triggerHaptic('tap')
                     updateLocalFeel({ preferredPointerTab: opt.id })
@@ -211,13 +224,18 @@ export function PointerSettingsSheet() {
             })}
           </div>
 
-          <div className="ak-seg grid grid-cols-2 gap-1 p-0.5 rounded-[14px] border">
+          <div
+            role="group"
+            aria-label="默认飞鼠模式"
+            className="ak-seg grid grid-cols-2 gap-1 p-0.5 rounded-[14px] border"
+          >
             {airMouseFeelOptions.map((opt) => {
               const active = localFeel.airMouseFeel === opt.id
               return (
                 <button
                   key={opt.id}
                   type="button"
+                  aria-pressed={active}
                   onClick={() => {
                     triggerHaptic('tap')
                     updateLocalFeel({ airMouseFeel: opt.id })
@@ -235,10 +253,39 @@ export function PointerSettingsSheet() {
         </div>
       </div>
 
-      {/* Three-Finger System Gestures Switch */}
-      <div className="ak-well rounded-[18px] border">
+      {/* Air-Mouse Pad Tap/Double-Tap & Three-Finger System Gestures Switches */}
+      <div className="ak-well rounded-[18px] border divide-y divide-black/[0.04] dark:divide-white/[0.05]">
         <button
           type="button"
+          role="switch"
+          aria-checked={localFeel.airMousePadTapClick}
+          onClick={() => {
+            const next = !localFeel.airMousePadTapClick
+            triggerHaptic('tap')
+            updateLocalFeel({ airMousePadTapClick: next })
+            showHudToast(
+              next
+                ? '已开启飞鼠控制板点按（单击左键 · 双击右键）'
+                : '已关闭飞鼠控制板点按',
+            )
+          }}
+          className="w-full py-2.5 px-3.5 flex items-center justify-between gap-3 text-left text-xs"
+        >
+          <div className="min-w-0">
+            <span className="ak-text-1 font-medium block">飞鼠控制板点按</span>
+            <span className="ak-text-3 text-[11px] block mt-0.5">
+              轻点左键 · 双击右键，不影响按住移鼠
+            </span>
+          </div>
+          <span aria-hidden="true" className={switchTrack(localFeel.airMousePadTapClick)}>
+            <span className="w-5 h-5 rounded-full bg-white shadow-xs" />
+          </span>
+        </button>
+
+        <button
+          type="button"
+          role="switch"
+          aria-checked={localFeel.threeFingerSystemGestures}
           onClick={() => {
             const next = !localFeel.threeFingerSystemGestures
             triggerHaptic('tap')
@@ -248,7 +295,7 @@ export function PointerSettingsSheet() {
           className="w-full h-11 px-3.5 flex items-center justify-between text-xs"
         >
           <span className="ak-text-1 font-medium">三指系统手势</span>
-          <span className={switchTrack(localFeel.threeFingerSystemGestures)}>
+          <span aria-hidden="true" className={switchTrack(localFeel.threeFingerSystemGestures)}>
             <span className="w-5 h-5 rounded-full bg-white shadow-xs" />
           </span>
         </button>
